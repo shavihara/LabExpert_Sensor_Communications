@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+yagmail
+python-dotenv
+pydantic[email]
+pyotp
+qrcode[pil]
+pillow
+bcrypt
+psutil
+aiohttp
+sse-starlette

@@ -1,0 +1,35 @@
+cd ~/Desktop/LabExpert/py_backend
+
+
+source .venv/bin/activate
+
+source .venv/bin/activate
+python main.py
+
+
+uvicorn main:app --reload
+
+
+fastapi
+uvicorn
+yagmail
+python-dotenv
+bcrypt
+sqlalchemy
+pyotp
+qrcode[pil]
+pillow
+email-validator
+python-multipart
+
+
+
+fastapi==0.117.1
+uvicorn==0.24.0
+pydantic[email]==2.6.1
+pyotp==2.8.0
+qrcode[pil]==8.2
+python-multipart==0.0.6
+pillow==11.3.0
+bcrypt==4.0.1
+

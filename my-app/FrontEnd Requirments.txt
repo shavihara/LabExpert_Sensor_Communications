@@ -1,0 +1,3 @@
+FrontEnd Requirments
+
+Tailwind CSS v3

@@ -1,0 +1,759 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Brush } from 'recharts';
+import { Play, Pause, Square, Download, Save, Settings, AlertCircle, RefreshCcw, Wifi, WifiOff, Zap } from 'lucide-react';
+
+const BACKEND_URL = 'http://localhost:5000';
+const RECONNECT_DELAY = 3000;
+const CONNECTION_CHECK_INTERVAL = 5000;
+
+function ExperimentInterface() {
+  // Experiment state
+  const [isRunning, setIsRunning] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [activeGraph, setActiveGraph] = useState('displacement');
+  const [elapsedTime, setElapsedTime] = useState(0);
+  const [startTime, setStartTime] = useState(0);
+
+  // Configuration state
+  const [timeLimit, setTimeLimit] = useState(60);
+  const [samplingRate, setSamplingRate] = useState(10);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showConfigModal, setShowConfigModal] = useState(false);
+
+  // Data state
+  const [sensorData, setSensorData] = useState([]);
+  const [graphData, setGraphData] = useState([]);
+
+  // Connection state
+  const [esp32Connected, setEsp32Connected] = useState(false);
+  const [esp32Info, setEsp32Info] = useState(null);
+  const [isCheckingConnection, setIsCheckingConnection] = useState(false);
+  const [error, setError] = useState(null);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const token = localStorage.getItem('token');
+
+  // Check ESP32 connection periodically
+  useEffect(() => {
+    const checkConnection = async () => {
+      if (isRunning) return; // Don't check during experiment
+
+      setIsCheckingConnection(true);
+      try {
+        const response = await fetch(`${BACKEND_URL}/api/sensor/status`, {
+          headers: {
+            'Authorization': `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setEsp32Connected(data.status.connected);
+          setEsp32Info(data.status.device_info);
+          if (!data.status.connected) {
+            setError('ESP32 not connected');
+          } else {
+            setError(null);
+          }
+        } else {
+          setEsp32Connected(false);
+          setError('Failed to check ESP32 status');
+        }
+      } catch (err) {
+        setEsp32Connected(false);
+        setError('Cannot reach backend server');
+      } finally {
+        setIsCheckingConnection(false);
+      }
+    };
+
+    checkConnection(); // Initial check
+    const interval = setInterval(checkConnection, CONNECTION_CHECK_INTERVAL);
+
+    return () => clearInterval(interval);
+  }, [token, isRunning]);
+
+  // Parse incoming SSE data and compute derivatives
+  const parseAndComputeReading = (sseData, currentTime) => {
+    const data = JSON.parse(sseData);
+    const timestamp = currentTime / 1000; // Convert to seconds
+    const displacement = parseFloat(data.distance) / 1000; // Convert mm to m
+
+    let velocity = 0;
+    let acceleration = 0;
+
+    if (graphData.length > 0) {
+      const last = graphData[graphData.length - 1];
+      const deltaT = timestamp - last.time;
+      if (deltaT > 0) {
+        velocity = (displacement - last.displacement) / deltaT;
+      }
+
+      if (graphData.length > 1) {
+        const prevVelocity = last.velocity;
+        acceleration = (velocity - prevVelocity) / deltaT;
+      }
+    }
+
+    return {
+      timestamp: timestamp,
+      velocity: parseFloat(velocity.toFixed(3)),
+      displacement: parseFloat(displacement.toFixed(4)),
+      acceleration: parseFloat(acceleration.toFixed(3)),
+      temperature: data.temperature || (25 + Math.random() * 2).toFixed(1),
+      pressure: data.pressure || (101.3 + Math.random() * 0.5).toFixed(2)
+    };
+  };
+
+  // SSE connection logic
+  useEffect(() => {
+    let eventSource;
+    let reconnectTimeout;
+
+    const connectSSE = () => {
+      if (!token) {
+        setError('Please log in to access live data.');
+        return;
+      }
+
+      if (!esp32Connected) {
+        setError('ESP32 not connected. Please check hardware.');
+        return;
+      }
+
+      setIsConnecting(true);
+      setError(null);
+
+      // Use query param for auth since EventSource doesn't support headers
+      eventSource = new EventSource(`${BACKEND_URL}/api/sensor/stream?token=${token}`);
+
+      eventSource.onmessage = (event) => {
+        if (event.data) {
+          const newTime = Date.now() - startTime;
+          const reading = parseAndComputeReading(event.data, newTime);
+
+          setElapsedTime(newTime);
+          setSensorData(prev => [reading, ...prev].slice(0, 20));
+          setGraphData(prev => [...prev, {
+            time: reading.timestamp,
+            velocity: reading.velocity,
+            displacement: reading.displacement,
+            acceleration: reading.acceleration,
+          }].slice(-200)); // Keep last 200 points
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error('SSE error:', err);
+        eventSource.close();
+        setError('Connection lost. Reconnecting...');
+        setIsConnecting(false);
+        reconnectTimeout = setTimeout(connectSSE, RECONNECT_DELAY);
+      };
+
+      eventSource.onopen = () => {
+        setIsConnecting(false);
+        setError(null);
+      };
+    };
+
+    if (isRunning && !isPaused && elapsedTime < timeLimit * 1000) {
+      connectSSE();
+    }
+
+    if (elapsedTime >= timeLimit * 1000 && isRunning) {
+      handleStop();
+    }
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, [isRunning, isPaused, elapsedTime, timeLimit, startTime, token, esp32Connected]);
+
+  const handleConfigureExperiment = async () => {
+    if (!esp32Connected) {
+      alert('ESP32 not connected. Please check hardware.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/sensor/configure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          frequency: samplingRate,
+          duration: timeLimit,
+          mode: 'distance'
+        }),
+      });
+
+      if (response.ok) {
+        setShowConfigModal(false);
+        alert('Experiment configured successfully!');
+        return true;
+      } else {
+        alert('Failed to configure experiment');
+        return false;
+      }
+    } catch (err) {
+      alert('Error configuring experiment: ' + err.message);
+      return false;
+    }
+  };
+
+  const handleStart = async () => {
+    if (!esp32Connected) {
+      alert('ESP32 not connected. Please check hardware connection.');
+      return;
+    }
+
+    // Configure experiment first
+    const configured = await handleConfigureExperiment();
+    if (!configured) return;
+
+    // Start experiment on ESP32
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/sensor/start`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to start experiment on ESP32');
+      }
+
+      // Reset data if starting fresh
+      if (elapsedTime === 0) {
+        setSensorData([]);
+        setGraphData([]);
+        setStartTime(Date.now());
+      }
+
+      setIsRunning(true);
+      setIsPaused(false);
+      setError(null);
+    } catch (err) {
+      setError('Failed to start experiment: ' + err.message);
+    }
+  };
+
+  const handlePause = () => {
+    setIsPaused(!isPaused);
+  };
+
+  const handleStop = async () => {
+    // Stop experiment on ESP32
+    try {
+      await fetch(`${BACKEND_URL}/api/sensor/stop`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      });
+    } catch (err) {
+      console.error('Error stopping experiment:', err);
+    }
+
+    setIsRunning(false);
+    setIsPaused(false);
+    setElapsedTime(0);
+    setError(null);
+  };
+
+  const handleReset = () => {
+    setSensorData([]);
+    setGraphData([]);
+    setElapsedTime(0);
+    setError(null);
+  };
+
+  const handleExportCSV = () => {
+    if (sensorData.length === 0) return;
+
+    const headers = ['Time (s)', 'Velocity (m/s)', 'Displacement (m)', 'Acceleration (m/s²)', 'Temperature (°C)', 'Pressure (kPa)'];
+    const csvContent = [
+      headers.join(','),
+      ...sensorData.slice().reverse().map(row =>
+        `${row.timestamp.toFixed(3)},${row.velocity},${row.displacement},${row.acceleration},${row.temperature},${row.pressure}`
+      )
+    ].join('\n');
+
+    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `experiment_${new Date().toISOString()}.csv`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const handleSaveToProfile = async () => {
+    if (!token) {
+      alert('Please log in to save data.');
+      return;
+    }
+
+    if (graphData.length === 0) {
+      alert('No data to save.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/sensor/save_data`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          data: graphData,
+          metadata: {
+            duration: timeLimit,
+            samplingRate: samplingRate,
+            timestamp: new Date().toISOString(),
+            sensorType: esp32Info?.sensor_type || 'unknown'
+          }
+        }),
+      });
+
+      if (response.ok) {
+        alert('Data saved to your profile!');
+      } else {
+        alert('Failed to save data.');
+      }
+    } catch (err) {
+      alert('Error saving data: ' + err.message);
+    }
+  };
+
+  const getGraphColor = () => {
+    switch (activeGraph) {
+      case 'velocity': return '#667eea';
+      case 'displacement': return '#22c55e';
+      case 'acceleration': return '#f59e0b';
+      default: return '#667eea';
+    }
+  };
+
+  const getGraphLabel = () => {
+    switch (activeGraph) {
+      case 'velocity': return 'Velocity (m/s)';
+      case 'displacement': return 'Displacement (m)';
+      case 'acceleration': return 'Acceleration (m/s²)';
+      default: return '';
+    }
+  };
+
+  const progress = Math.min((elapsedTime / (timeLimit * 1000)) * 100, 100);
+
+  // Memoize chart data for performance
+  const memoizedGraphData = useMemo(() => graphData, [graphData]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-200 p-3 pt-20 font-sans antialiased">
+      {/* Header */}
+      <div className="max-w-7xl mx-auto mb-6">
+        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-2xl p-6 text-white shadow-xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold mb-2">Motion Analysis Experiment</h1>
+              <p className="opacity-90">Real-time kinematic data from ToF sensor</p>
+            </div>
+            <div className="flex items-center gap-4">
+              {/* Connection Status */}
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-xl ${
+                esp32Connected ? 'bg-green-500/20' : 'bg-red-500/20'
+              }`}>
+                {esp32Connected ? <Wifi size={20} /> : <WifiOff size={20} />}
+                <span className="font-semibold">
+                  {isCheckingConnection ? 'Checking...' : esp32Connected ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="p-3 bg-white/20 hover:bg-white/30 rounded-xl transition-all duration-200"
+              >
+                <Settings size={24} />
+              </button>
+            </div>
+          </div>
+          {esp32Info && esp32Connected && (
+            <div className="mt-4 text-sm opacity-75">
+              Sensor Type: {esp32Info.sensor_type || 'Unknown'} | ID: {esp32Info.sensor_id || 'N/A'}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="max-w-7xl mx-auto">
+        {/* Error/Status Message */}
+        {error && (
+          <div className="bg-red-100 border border-red-200 text-red-700 px-4 py-3 rounded-xl mb-6 flex items-center gap-2">
+            <AlertCircle size={20} />
+            {error}
+            {!esp32Connected && (
+              <button
+                onClick={() => window.location.reload()}
+                className="ml-auto flex items-center gap-1 text-red-800 hover:underline"
+              >
+                <RefreshCcw size={16} />
+                Refresh
+              </button>
+            )}
+          </div>
+        )}
+
+        {isConnecting && (
+          <div className="bg-blue-100 border border-blue-200 text-blue-700 px-4 py-3 rounded-xl mb-6">
+            Connecting to sensor stream...
+          </div>
+        )}
+
+        {/* Configuration Modal */}
+        {showConfigModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl p-8 max-w-md w-full shadow-2xl">
+              <h2 className="text-2xl font-bold text-slate-800 mb-6">Configure Experiment</h2>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Time Limit (seconds)
+                  </label>
+                  <input
+                    type="number"
+                    value={timeLimit}
+                    onChange={(e) => setTimeLimit(Number(e.target.value))}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                    min="10"
+                    max="300"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-2">
+                    Sampling Rate (Hz)
+                  </label>
+                  <input
+                    type="number"
+                    value={samplingRate}
+                    onChange={(e) => setSamplingRate(Number(e.target.value))}
+                    className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-purple-500 focus:outline-none"
+                    min="1"
+                    max="100"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowConfigModal(false)}
+                  className="flex-1 px-6 py-3 bg-slate-200 text-slate-700 rounded-xl font-semibold hover:bg-slate-300 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const success = await handleConfigureExperiment();
+                    if (success) setShowConfigModal(false);
+                  }}
+                  className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Settings Panel */}
+        {showSettings && (
+          <div className="bg-white rounded-2xl p-6 mb-6 shadow-lg border border-slate-200 transition-all duration-300">
+            <h3 className="text-xl font-bold text-slate-800 mb-4">Experiment Settings</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Time Limit (seconds)
+                </label>
+                <input
+                  type="number"
+                  value={timeLimit}
+                  onChange={(e) => setTimeLimit(Number(e.target.value))}
+                  disabled={isRunning}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-purple-500 focus:outline-none disabled:bg-slate-100 transition-colors"
+                  min="10"
+                  max="300"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-2">
+                  Sampling Rate (Hz)
+                </label>
+                <input
+                  type="number"
+                  value={samplingRate}
+                  onChange={(e) => setSamplingRate(Number(e.target.value))}
+                  disabled={isRunning}
+                  className="w-full px-4 py-3 border-2 border-slate-200 rounded-xl focus:border-purple-500 focus:outline-none disabled:bg-slate-100 transition-colors"
+                  min="1"
+                  max="100"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Control Panel */}
+        <div className="bg-white rounded-2xl p-6 mb-6 shadow-lg border border-slate-200">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="text-center">
+                <div className="text-4xl font-bold text-slate-800">
+                  {Math.floor(elapsedTime / 1000)}s
+                </div>
+                <div className="text-sm text-slate-500">Elapsed Time</div>
+              </div>
+              <div className="h-16 w-px bg-slate-200" />
+              <div className="text-center">
+                <div className="text-2xl font-bold text-purple-600">
+                  {timeLimit}s
+                </div>
+                <div className="text-sm text-slate-500">Total Time</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3 flex-wrap justify-center">
+              {!isRunning ? (
+                <>
+                  <button
+                    onClick={() => setShowConfigModal(true)}
+                    disabled={!esp32Connected}
+                    className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-indigo-500 to-purple-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Settings size={20} />
+                    Configure
+                  </button>
+                  <button
+                    onClick={handleStart}
+                    disabled={!esp32Connected || isConnecting}
+                    className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Play size={20} />
+                    Start
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={handlePause}
+                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-yellow-500 to-orange-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5"
+                >
+                  <Pause size={20} />
+                  {isPaused ? 'Resume' : 'Pause'}
+                </button>
+              )}
+              <button
+                onClick={handleStop}
+                disabled={!isRunning && elapsedTime === 0}
+                className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-red-500 to-rose-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Square size={20} />
+                Stop
+              </button>
+              {!isRunning && graphData.length > 0 && (
+                <button
+                  onClick={handleReset}
+                  className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-slate-500 to-slate-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5"
+                >
+                  <RefreshCcw size={20} />
+                  Reset
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-purple-600 to-indigo-600 transition-all duration-300 ease-out"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Main Content Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Graph Section */}
+          <div className="lg:col-span-2 bg-white rounded-2xl p-6 shadow-lg border border-slate-200">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-slate-800">Live Data Visualization</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setActiveGraph('velocity')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-all duration-200 ${
+                    activeGraph === 'velocity'
+                      ? 'bg-purple-600 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  v-t
+                </button>
+                <button
+                  onClick={() => setActiveGraph('displacement')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-all duration-200 ${
+                    activeGraph === 'displacement'
+                      ? 'bg-green-600 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  s-t
+                </button>
+                <button
+                  onClick={() => setActiveGraph('acceleration')}
+                  className={`px-4 py-2 rounded-lg font-semibold transition-all duration-200 ${
+                    activeGraph === 'acceleration'
+                      ? 'bg-orange-600 text-white shadow-md'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  a-t
+                </button>
+              </div>
+            </div>
+
+            <div className="h-96 bg-slate-50 rounded-xl p-4">
+              {graphData.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={memoizedGraphData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis
+                      dataKey="time"
+                      label={{ value: 'Time (s)', position: 'insideBottom', offset: -5 }}
+                      stroke="#64748b"
+                      tickFormatter={(value) => value.toFixed(1)}
+                    />
+                    <YAxis
+                      label={{
+                        value: getGraphLabel(),
+                        angle: -90,
+                        position: 'insideLeft'
+                      }}
+                      stroke="#64748b"
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#fff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '8px',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      }}
+                      formatter={(value) => value.toFixed(4)}
+                    />
+                    <Legend />
+                    <Line
+                      type="monotone"
+                      dataKey={activeGraph}
+                      stroke={getGraphColor()}
+                      strokeWidth={2}
+                      dot={false}
+                      name={activeGraph.charAt(0).toUpperCase() + activeGraph.slice(1)}
+                      animationDuration={300}
+                      isAnimationActive={false}
+                    />
+                    <Brush dataKey="time" height={30} stroke="#8884d8" />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="h-full flex items-center justify-center text-slate-400">
+                  <div className="text-center">
+                    <Zap size={48} className="mx-auto mb-2 opacity-50" />
+                    <p className="text-lg font-medium">
+                      {!esp32Connected
+                        ? 'Waiting for ESP32 connection...'
+                        : 'Configure and start the experiment to see live data'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Sensor Data Table */}
+          <div className="bg-white rounded-2xl p-6 shadow-lg border border-slate-200">
+            <h3 className="text-xl font-bold text-slate-800 mb-4">Recent Sensor Readings</h3>
+            <div className="overflow-y-auto max-h-96 rounded-lg border border-slate-100">
+              {sensorData.length > 0 ? (
+                <table className="w-full text-sm divide-y divide-slate-100">
+                  <thead className="sticky top-0 bg-slate-100">
+                    <tr>
+                      <th className="text-left p-3 font-semibold text-slate-700">Parameter</th>
+                      <th className="text-right p-3 font-semibold text-slate-700">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {sensorData.map((reading, idx) => (
+                      <React.Fragment key={idx}>
+                        <tr className="bg-slate-50">
+                          <td className="p-3 text-slate-600 font-medium" colSpan={2}>
+                            t = {reading.timestamp.toFixed(2)}s
+                          </td>
+                        </tr>
+                        <tr className="hover:bg-purple-50 transition-colors">
+                          <td className="pl-6 py-2 text-slate-600">Velocity</td>
+                          <td className="text-right pr-3 py-2 font-mono text-purple-700">{reading.velocity} m/s</td>
+                        </tr>
+                        <tr className="hover:bg-green-50 transition-colors">
+                          <td className="pl-6 py-2 text-slate-600">Displacement</td>
+                          <td className="text-right pr-3 py-2 font-mono text-green-700">{reading.displacement} m</td>
+                        </tr>
+                        <tr className="hover:bg-orange-50 transition-colors">
+                          <td className="pl-6 py-2 text-slate-600">Acceleration</td>
+                          <td className="text-right pr-3 py-2 font-mono text-orange-700">{reading.acceleration} m/s²</td>
+                        </tr>
+                      </React.Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-center text-slate-400 py-8">
+                  <p>No data recorded yet</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Export Actions */}
+        <div className="mt-6 bg-white rounded-2xl p-6 shadow-lg border border-slate-200">
+          <h3 className="text-xl font-bold text-slate-800 mb-4">Export & Save</h3>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={handleExportCSV}
+              disabled={sensorData.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-blue-600 to-cyan-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Download size={20} />
+              Export as CSV
+            </button>
+            <button
+              onClick={handleSaveToProfile}
+              disabled={sensorData.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 px-6 py-3 bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all duration-200 hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Save size={20} />
+              Save to Profile
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default ExperimentInterface;

@@ -1,0 +1,40 @@
+# -------------------------
+# Python environment folders
+# -------------------------
+venv/
+.venv/
+env/
+
+# -------------------------
+# Python cache and compiled files
+# -------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -------------------------
+# Temporary or test folders
+# -------------------------
+temp/
+tmp/
+tempmain.py
+main_v1.3_terminal.py
+main_sensor.cpp
+
+# -------------------------
+# Environment & secret files
+# -------------------------
+.env
+
+# -------------------------
+# Logs and system files
+# -------------------------
+*.log
+.DS_Store
+Thumbs.db
+
+# -------------------------
+# IDE and editor settings
+# -------------------------
+.vscode/
+.idea/
