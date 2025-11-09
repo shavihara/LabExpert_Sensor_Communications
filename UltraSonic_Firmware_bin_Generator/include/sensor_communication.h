@@ -27,20 +27,22 @@
 #define MIN_FREQUENCY 10
 
 // HC-SR04 specific configuration
-#define MAX_DISTANCE_MM 4000  // Maximum reliable distance for HC-SR04 (400cm = 4000mm)
-#define SOUND_SPEED 0.0343  // Speed of sound in cm/μs
+#define MAX_DISTANCE_MM 4000 // Maximum reliable distance for HC-SR04 (400cm = 4000mm)
+#define SOUND_SPEED 0.0343   // Speed of sound in cm/μs
 #define TIMEOUT_MICROS 30000 // Timeout for pulseIn (30ms)
 
 // Sensor calibration structure
-struct SensorCalibration {
+struct SensorCalibration
+{
     float offsetCM = 0.0;
     float scaleFactor = 1.0;
     uint16_t minValidReading = 2;   // Minimum valid distance in cm
-    uint16_t maxValidReading = 400;  // Maximum valid distance in cm
+    uint16_t maxValidReading = 400; // Maximum valid distance in cm
 };
 
 // Diagnostic statistics
-struct DiagnosticStats {
+struct DiagnosticStats
+{
     uint32_t totalReadings = 0;
     uint32_t successfulReadings = 0;
     uint32_t readErrors = 0;
