@@ -6,6 +6,8 @@
 // Global variables - DEFINE here (only once, at the top)
 String sensorType = "LDR_OSCILLATION";
 String sensorID = "UNKNOWN";
+bool wifiLedState = false;
+bool sensorLedState = false;
 
 // Detect sensor from EEPROM
 bool detectSensorFromEEPROM()
@@ -38,15 +40,15 @@ bool detectSensorFromEEPROM()
 
                     if (eepromData == "OSI")
                     {
-                        sensorType = "OSI";
-                    }
-                    else if (eepromData == "TOF")
-                    {
-                        sensorType = "TOF";
+                        sensorType = eepromData;
+                        sensorLedState = true;
+                        digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
                     }
                     else
                     {
-                        sensorType = "LDR"; // Default for oscillation counter
+                        sensorType = eepromData;
+                        Serial.println("⚠️ WARNNING!(Sensor Type: %s, ID: %s not copatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
+                        return false;
                     }
 
                     Serial.printf("Sensor Type: %s\n", sensorType.c_str());

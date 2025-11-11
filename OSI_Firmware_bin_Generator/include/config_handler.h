@@ -5,7 +5,7 @@
 #include <ArduinoJson.h>
 
 // Pin definitions
-#define SENSOR_PIN 21
+#define SENSOR_PIN 4
 #define WIFI_LED 14
 #define SENSOR_LED 13
 
