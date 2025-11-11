@@ -75,7 +75,7 @@ bool detectSensorFromEEPROM()
                     else
                     {
                         sensorType = eepromData;
-                        Serial.println("⚠️ WARNNING!(Sensor Type: %s, ID: %s not copatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
+                        Serial.printf("⚠️ WARNING!(Sensor Type: %s, ID: %s not compatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
                         return false;
                     }
                     Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
