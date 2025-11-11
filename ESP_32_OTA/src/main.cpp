@@ -9,11 +9,11 @@
 #include <WiFiUdp.h>
 #include <vector>
 // Forward declarations
-static bool hexToBytes(const String& hex, std::vector<uint8_t>& out);
+static bool hexToBytes(const String &hex, std::vector<uint8_t> &out);
 static String getDeviceIDFromMAC();
 // GPIO pin setup
-#define WIFI_LED 2
-#define SENSOR_LED 15
+#define WIFI_LED 14
+#define SENSOR_LED 13
 
 // EEPROM config
 #define EEPROM_SENSOR_ADDR 0x50
@@ -21,14 +21,14 @@ static String getDeviceIDFromMAC();
 
 // Wi-Fi credentials - Connect to device hotspot
 const char *ssid = "LabExpert_1.0"; // Change this to your device hotspot name
-const char *password = "11111111";   // Change this to your hotspot password
+const char *password = "11111111";  // Change this to your hotspot password
 // Use DHCP to get IP from hotspot
 
 // Web server
 WebServer server(80);
 String deviceID = "ESP32";
-const char* backendHost = "192.168.1.198"; // Backend server IP - Use the IP of your device running the backend
-//const char* backendHost = "192.168.137.1";  Backend server IP - Connect to hotspot interface
+const char *backendHost = "192.168.1.198"; // Backend server IP - Use the IP of your device running the backend
+// const char* backendHost = "192.168.137.1";  Backend server IP - Connect to hotspot interface
 const uint16_t backendPort = 5000;
 
 // OTA state
@@ -50,8 +50,6 @@ const unsigned long ledInterval = 3000;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
-
-
 // Retry mechanism for EEPROM detection
 #define EEPROM_RETRY_COUNT 3
 #define EEPROM_RETRY_DELAY 1000 // 1 second between retries
@@ -60,8 +58,8 @@ bool sensorLedState = false;
 WiFiUDP udp;
 const unsigned int UDP_DISCOVERY_PORT = 8888;
 const unsigned int UDP_RESPONSE_PORT = 8889;
-const char* UDP_DISCOVERY_MAGIC = "LABEXPERT_DISCOVERY";
-const char* UDP_RESPONSE_MAGIC = "LABEXPERT_RESPONSE";
+const char *UDP_DISCOVERY_MAGIC = "LABEXPERT_DISCOVERY";
+const char *UDP_RESPONSE_MAGIC = "LABEXPERT_RESPONSE";
 unsigned long lastUDPCheck = 0;
 const unsigned long UDP_CHECK_INTERVAL = 1000; // Check for UDP packets every second
 
@@ -118,17 +116,14 @@ bool detectSensor()
           String eepromData = String(buffer);
           Serial.printf("EEPROM data: %s\n", eepromData.c_str());
 
-          if (eepromData == "OSI")
+          if (eepromData != "")
           {
-            sensorType = "OSI";
-          }
-          else if (eepromData == "TOF")
-          {
-            sensorType = "TOF";
+            sensorType = eepromData;
           }
           else
           {
             sensorType = "UNKNOWN";
+            Serial.printf("⚠️ WARNNING!(Sensor Type: %s, ID: %s unable to recognize!)\n", sensorType.c_str(), sensorID.c_str());
           }
           Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
           return (sensorType != "UNKNOWN");
@@ -257,8 +252,7 @@ void setupRoutes()
 
   // Lightweight ping endpoint for device status checking
   server.on("/ping", HTTP_GET, []()
-            {
-    server.send(200, "text/plain", "pong"); });
+            { server.send(200, "text/plain", "pong"); });
 
   server.on("/id", HTTP_GET, []()
             {
@@ -269,7 +263,8 @@ void setupRoutes()
     server.send(200, "application/json", json); });
 
   // OTA push endpoints for backend
-  server.on("/ota/begin", HTTP_POST, []() {
+  server.on("/ota/begin", HTTP_POST, []()
+            {
     String body = server.arg("plain");
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body);
@@ -288,10 +283,10 @@ void setupRoutes()
     otaExpectedSize = size;
     otaWritten = 0;
     Serial.printf("OTA begin: size=%u, partition=%s\n", (unsigned)size, next? next->label : "?");
-    server.send(200, "application/json", "{\"success\":true}");
-  });
+    server.send(200, "application/json", "{\"success\":true}"); });
 
-  server.on("/ota/write", HTTP_POST, []() {
+  server.on("/ota/write", HTTP_POST, []()
+            {
     String body = server.arg("plain");
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, body);
@@ -322,10 +317,10 @@ void setupRoutes()
       return;
     }
     otaWritten += written;
-    server.send(200, "application/json", "{\"success\":true}");
-  });
+    server.send(200, "application/json", "{\"success\":true}"); });
 
-  server.on("/ota/end", HTTP_POST, []() {
+  server.on("/ota/end", HTTP_POST, []()
+            {
     if (!otaInProgress) {
       server.send(400, "application/json", "{\"success\":false,\"error\":\"not_in_progress\"}");
       return;
@@ -340,8 +335,7 @@ void setupRoutes()
       Update.printError(Serial);
       server.send(500, "application/json", "{\"success\":false}");
     }
-    otaInProgress = false;
-  });
+    otaInProgress = false; });
 }
 
 // ========== UDP Discovery Functions ==========
@@ -351,7 +345,7 @@ void handleUDPDiscovery()
   if (currentMillis - lastUDPCheck >= UDP_CHECK_INTERVAL)
   {
     lastUDPCheck = currentMillis;
-    
+
     // Check for incoming UDP packets
     int packetSize = udp.parsePacket();
     if (packetSize)
@@ -361,15 +355,15 @@ void handleUDPDiscovery()
       if (len > 0)
       {
         packetBuffer[len] = '\0';
-        
+
         // Check if this is a discovery packet
         if (strcmp(packetBuffer, UDP_DISCOVERY_MAGIC) == 0)
         {
           Serial.println("Received UDP discovery request");
-          
+
           // Get device ID from MAC address (last 5 digits)
           String deviceID = getDeviceIDFromMAC();
-          
+
           // Create response JSON
           JsonDocument doc;
           doc["device_id"] = deviceID;
@@ -378,15 +372,15 @@ void handleUDPDiscovery()
           doc["sensor_type"] = sensorType;
           doc["availability"] = 1; // Always available in OTA mode
           doc["magic"] = UDP_RESPONSE_MAGIC;
-          
+
           String response;
           serializeJson(doc, response);
-          
+
           // Send response back to sender
           udp.beginPacket(udp.remoteIP(), UDP_RESPONSE_PORT);
-          udp.write((const uint8_t*)response.c_str(), response.length());
+          udp.write((const uint8_t *)response.c_str(), response.length());
           udp.endPacket();
-          
+
           Serial.printf("Sent UDP discovery response: %s\n", response.c_str());
         }
       }
@@ -431,29 +425,34 @@ void setup()
   }
 
   // Check if we should run in bootloader mode (custom partition 0)
-  if (running && strcmp(running->label, "ota_0") == 0) {
+  if (running && strcmp(running->label, "ota_0") == 0)
+  {
     Serial.println("✅ Running in bootloader mode (ESP_32_OTA on ota_0)");
-    if (sensorType == "UNKNOWN") {
+    if (sensorType == "UNKNOWN")
+    {
       Serial.println("🔄 Likely booted back from main firmware due to EEPROM failure");
       Serial.println("📡 Ready to receive new firmware via OTA when sensor is reconnected");
     }
-  } else if (running && strcmp(running->label, "ota_1") == 0) {
+  }
+  else if (running && strcmp(running->label, "ota_1") == 0)
+  {
     Serial.println("⚠️ Running in UI firmware mode (partition 1) - This should not happen in OTA bootloader!");
     // If running UI firmware but sensor is missing, erase and reboot to bootloader
-    if (sensorType == "UNKNOWN") {
+    if (sensorType == "UNKNOWN")
+    {
       Serial.println("❌ Sensor missing while running UI firmware - erasing and rebooting to bootloader");
       eraseInactivePartition();
       delay(1000);
       ESP.restart();
     }
   }
-  
+
   // Erase inactive partition to allow clean OTA
   eraseInactivePartition();
 
   // Use DHCP for network compatibility
   WiFi.mode(WIFI_STA);
-  
+
   WiFi.begin(ssid, password);
   Serial.printf("Connecting to WiFi SSID: %s\n", ssid);
   while (WiFi.status() != WL_CONNECTED)
@@ -469,14 +468,17 @@ void setup()
 
   setupRoutes();
   server.begin();
-  
+
   // Initialize UDP for discovery
-  if (udp.begin(UDP_DISCOVERY_PORT)) {
+  if (udp.begin(UDP_DISCOVERY_PORT))
+  {
     Serial.printf("✓ UDP discovery server started on port %d\n", UDP_DISCOVERY_PORT);
-  } else {
+  }
+  else
+  {
     Serial.println("✘ Failed to start UDP discovery server");
   }
-  
+
   Serial.println("✓ OTA Server ready.");
 }
 
@@ -497,15 +499,18 @@ void loop()
   }
 
   // Periodic sensor presence check
-  if (millis() - lastSensorCheck >= sensorCheckInterval) {
+  if (millis() - lastSensorCheck >= sensorCheckInterval)
+  {
     lastSensorCheck = millis();
     String prev = sensorType;
     bool ok = detectSensor();
-    
-    if (sensorType != prev) {
+
+    if (sensorType != prev)
+    {
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
-      
-      if (sensorType == "UNKNOWN") {
+
+      if (sensorType == "UNKNOWN")
+      {
         Serial.println("Sensor unplug detected; erasing inactive OTA partition and rebooting to bootloader mode");
         eraseInactivePartition();
         // Force reboot to ensure we're in bootloader mode when sensor is unplugged
@@ -514,33 +519,41 @@ void loop()
       }
     }
   }
-
-
 }
 
 // ========== Utils ==========
-static bool hexToBytes(const String& hex, std::vector<uint8_t>& out) {
-  if (hex.length() % 2 != 0) return false;
+static bool hexToBytes(const String &hex, std::vector<uint8_t> &out)
+{
+  if (hex.length() % 2 != 0)
+    return false;
   out.clear();
-  out.reserve(hex.length()/2);
-  auto toNib = [](char c)->int {
-    if (c>='0' && c<='9') return c-'0';
-    if (c>='a' && c<='f') return 10 + (c-'a');
-    if (c>='A' && c<='F') return 10 + (c-'A');
+  out.reserve(hex.length() / 2);
+  auto toNib = [](char c) -> int
+  {
+    if (c >= '0' && c <= '9')
+      return c - '0';
+    if (c >= 'a' && c <= 'f')
+      return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F')
+      return 10 + (c - 'A');
     return -1;
   };
-  for (size_t i=0;i<hex.length();i+=2) {
+  for (size_t i = 0; i < hex.length(); i += 2)
+  {
     int n1 = toNib(hex[i]);
-    int n2 = toNib(hex[i+1]);
-    if (n1<0 || n2<0) return false;
-    out.push_back((uint8_t)((n1<<4)|n2));
+    int n2 = toNib(hex[i + 1]);
+    if (n1 < 0 || n2 < 0)
+      return false;
+    out.push_back((uint8_t)((n1 << 4) | n2));
   }
   return true;
 }
 
-static String getDeviceIDFromMAC() {
+static String getDeviceIDFromMAC()
+{
   String mac = WiFi.macAddress(); // "AA:BB:CC:DD:EE:FF"
   mac.replace(":", "");
-  if (mac.length() >= 5) return mac.substring(mac.length()-5);
+  if (mac.length() >= 5)
+    return mac.substring(mac.length() - 5);
   return mac;
 }
