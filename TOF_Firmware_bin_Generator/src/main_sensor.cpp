@@ -201,6 +201,12 @@ void loop()
 
     // Manage experiment execution
     manageExperimentLoop();
+    
+    // Check restart trigger pin
+    if (digitalRead(RESTART_TRIGGER_PIN) == LOW) {
+        Serial.println("⚠️ Restart trigger pin activated (LOW) - initiating OTA restart...");
+        cleanFirmwareAndBootOTA();
+    }
 
     delay(1);
 
