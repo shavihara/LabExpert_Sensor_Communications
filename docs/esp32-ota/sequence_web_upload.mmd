@@ -1,0 +1,23 @@
+sequenceDiagram
+  participant Browser
+  participant ESP32 as ESP32 OTA Bootloader
+  participant Flash as Partition (ota_x)
+
+  Browser->>ESP32: POST /update (multipart upload start)
+  ESP32->>ESP32: Update.begin(UPDATE_SIZE_UNKNOWN)
+  loop Stream chunks
+    Browser->>ESP32: file chunk
+    ESP32->>Flash: Update.write(buf)
+    alt write error
+      ESP32-->>Browser: FAIL (Update.printError)
+    end
+  end
+  Browser->>ESP32: upload end
+  ESP32->>ESP32: Update.end(true)
+  alt success
+    ESP32-->>Browser: OK
+    ESP32->>ESP32: ESP.restart()
+  else failure
+    ESP32-->>Browser: FAIL
+  end
+

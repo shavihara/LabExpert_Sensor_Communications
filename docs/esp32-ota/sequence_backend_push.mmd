@@ -1,0 +1,33 @@
+sequenceDiagram
+  participant Backend
+  participant ESP32 as ESP32 OTA Bootloader
+  participant Flash as Partition (ota_x)
+
+  Backend->>ESP32: POST /ota/begin { size }
+  ESP32->>ESP32: Update.begin(size); otaInProgress=true
+  ESP32-->>Backend: { success:true }
+
+  loop For each hex chunk
+    Backend->>ESP32: POST /ota/write { offset, size, data(hex) }
+    ESP32->>ESP32: hexToBytes(data)
+    alt bad_json | bad_hex | size_mismatch | not_in_progress
+      ESP32-->>Backend: { success:false, error:<reason> }
+    else ok
+      ESP32->>Flash: Update.write(bytes)
+      alt write error
+        ESP32-->>Backend: { success:false }
+      else
+        ESP32-->>Backend: { success:true }
+      end
+    end
+  end
+
+  Backend->>ESP32: POST /ota/end
+  ESP32->>ESP32: Update.end(true)
+  alt success
+    ESP32-->>Backend: { success:true }
+    ESP32->>ESP32: ESP.restart()
+  else failure
+    ESP32-->>Backend: { success:false }
+  end
+

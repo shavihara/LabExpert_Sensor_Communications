@@ -1,0 +1,31 @@
+flowchart TD
+  A[Boot] --> B{Running partition}
+  B -->|ota_0| C[Bootloader mode]
+  B -->|ota_1| D[Application firmware]
+
+  C --> E[Erase inactive partition]
+  C --> F[Detect sensor via EEPROM]
+  F -->|OK| G[Setup WiFi + HTTP + UDP]
+  F -->|UNKNOWN| H[Retry detection / reboot]
+  H --> C
+
+  G --> I{OTA path}
+  I -->|Web upload| J[/POST /update/]
+  I -->|Backend push| K[/begin/write/end/]
+
+  J --> L[Stream Update.write]
+  L --> M{Update.end(true)}
+  K --> N[Validate JSON/hex/size]
+  N --> O[Stream Update.write]
+  O --> M
+
+  M -->|success| P[ESP.restart]
+  M -->|failure| Q[Report FAIL]
+
+  D --> R[Run sensor/UI]
+  R --> S{Sensor/EEPROM status}
+  S -->|OK| T[Normal operation]
+  S -->|FAIL| U[cleanFirmwareAndBootOTA]
+  U --> V[esp_ota_set_boot_partition]
+  V --> P
+

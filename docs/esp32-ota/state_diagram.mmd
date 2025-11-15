@@ -1,0 +1,14 @@
+stateDiagram-v2
+  [*] --> Bootloader
+  Bootloader --> OTA_In_Progress: /update or /ota/begin
+  OTA_In_Progress --> Bootloader: Update.end failure
+  OTA_In_Progress --> Rebooting: Update.end success
+  Rebooting --> Application
+
+  Application --> Normal_Operation: Sensor OK
+  Application --> Error_Recovery: Sensor/EEPROM FAIL
+  Error_Recovery --> Bootloader: set boot partition + restart
+
+  Bootloader --> Bootloader: Inactive partition erase
+  Bootloader --> Bootloader: UDP discovery responses
+
