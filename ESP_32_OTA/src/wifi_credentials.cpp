@@ -1,0 +1,355 @@
+#include "wifi_credentials.h"
+#include <WiFi.h>
+#include <esp_system.h>
+#include <esp_event.h>
+#include <esp_wifi.h>
+#include <nvs_flash.h>
+#include <nvs.h>
+
+#ifdef ARDUINO_ARCH_ESP32
+#include <esp_mac.h>
+#endif
+
+#if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
+#include <NimBLEDevice.h>
+#else
+#include <BluetoothSerial.h>
+static BluetoothSerial SerialBT;
+#endif
+
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/event_groups.h>
+
+// PROGMEM static strings
+static const char kNamespace[] = "wifi";
+static const char kKeySsid[]   = "ssid";
+static const char kKeyPass[]   = "pass";
+static const char kDevPrefix[] = "ESP32-";
+
+// Event bits
+static const EventBits_t EVT_WIFI_GOT_IP    = BIT0;
+static const EventBits_t EVT_PROV_START     = BIT1;
+static const EventBits_t EVT_PROV_COMMIT    = BIT2;
+static const EventBits_t EVT_PROV_DONE      = BIT3;
+
+// Button pin
+#ifndef WCM_BUTTON_PIN
+#define WCM_BUTTON_PIN 0
+#endif
+
+// Forward static wrappers
+static EventGroupHandle_t sEvtGroup = nullptr;
+static TaskHandle_t sBtnTask = nullptr;
+static TaskHandle_t sProvTask = nullptr;
+static WiFiCredentialManager* sMgr = nullptr;
+
+// Helpers
+static inline bool isValidSSIDChar(char c) {
+  return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '.' || c == '_' || c == '-';
+}
+static inline bool isValidPASSChar(char c) {
+  return c >= 0x20 && c <= 0x7E && c != '"' && c != '`';
+}
+
+static bool validateSSID(const char* s) {
+  size_t n = strnlen(s, 33);
+  if (n < 1 || n > 32) return false;
+  for (size_t i = 0; i < n; ++i) if (!isValidSSIDChar(s[i])) return false;
+  return true;
+}
+static bool validatePASS(const char* p) {
+  size_t n = strnlen(p, 65);
+  if (n < 8 || n > 64) return false;
+  for (size_t i = 0; i < n; ++i) if (!isValidPASSChar(p[i])) return false;
+  return true;
+}
+
+static void maskPass(const char* in, char* out, size_t outSize) {
+  size_t n = strnlen(in, 65);
+  size_t m = (n < outSize - 1) ? n : (outSize - 1);
+  for (size_t i = 0; i < m; ++i) out[i] = '*';
+  out[m] = '\0';
+}
+
+// Memory monitoring helpers
+static size_t getFreeHeap() { return esp_get_free_heap_size(); }
+static size_t getMinFreeHeap() { return esp_get_minimum_free_heap_size(); }
+
+// BLE callbacks (NimBLE)
+#if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
+class WcmSsidCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
+    std::string v = c->getValue();
+    size_t n = v.size();
+    if (n > 32) n = 32;
+    memset(sMgr->ssidBuf, 0, sizeof(sMgr->ssidBuf));
+    for (size_t i = 0; i < n; ++i) sMgr->ssidBuf[i] = (char)v[i];
+  }
+};
+
+class WcmPassCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
+    std::string v = c->getValue();
+    size_t n = v.size();
+    if (n > 64) n = 64;
+    memset(sMgr->passBuf, 0, sizeof(sMgr->passBuf));
+    for (size_t i = 0; i < n; ++i) sMgr->passBuf[i] = (char)v[i];
+  }
+};
+
+class WcmCommitCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
+    // Any write triggers commit attempt
+    xEventGroupSetBits(sEvtGroup, EVT_PROV_COMMIT);
+  }
+};
+
+static NimBLECharacteristic* sStatusChar = nullptr;
+static WcmSsidCallbacks sSsidCb;
+static WcmPassCallbacks sPassCb;
+static WcmCommitCallbacks sCommitCb;
+#endif
+
+// No WiFi event callback; using status polling to reduce API differences
+
+// Button task
+static void buttonTaskThunk(void* arg) {
+  pinMode(WCM_BUTTON_PIN, INPUT_PULLUP);
+  const TickType_t sample = pdMS_TO_TICKS(10);
+  uint32_t pressedMs = 0;
+  bool last = digitalRead(WCM_BUTTON_PIN) == LOW;
+  for (;;) {
+    bool cur = digitalRead(WCM_BUTTON_PIN) == LOW;
+    if (cur) {
+      pressedMs += 10;
+      if (pressedMs >= 3000) {
+        xEventGroupSetBits(sEvtGroup, EVT_PROV_START);
+        pressedMs = 0; // prevent repeat triggers until next release
+      }
+    } else {
+      pressedMs = 0;
+    }
+    last = cur;
+    vTaskDelay(sample);
+  }
+}
+
+// Provisioning task
+void provTaskThunk(void* arg) {
+  WiFiCredentialManager* mgr = (WiFiCredentialManager*)arg;
+  mgr->handleBluetoothProvisioning();
+  vTaskDelete(nullptr);
+}
+
+bool WiFiCredentialManager::begin() {
+  sMgr = this;
+  memset(ssidBuf, 0, sizeof(ssidBuf));
+  memset(passBuf, 0, sizeof(passBuf));
+
+  // Init NVS
+  esp_err_t err = nvs_flash_init();
+  if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+    nvs_flash_erase();
+    err = nvs_flash_init();
+  }
+  if (err != ESP_OK) return false;
+
+  sEvtGroup = xEventGroupCreate();
+  if (!sEvtGroup) return false;
+
+  // Optional event hook; connection wait uses polling to reduce API dependencies
+
+  startButtonTask();
+
+  // If no credentials, start provisioning immediately
+  if (!checkSavedCredentials()) {
+    startProvisioningTask();
+  }
+
+  return true;
+}
+
+bool WiFiCredentialManager::connectWiFi() {
+  if (!checkSavedCredentials()) return false;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssidBuf, passBuf);
+
+  // Poll status to ensure compatibility across Arduino core versions
+  TickType_t start = xTaskGetTickCount();
+  while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(15000)) {
+    if (WiFi.status() == WL_CONNECTED) {
+      return true;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100));
+  }
+  return false;
+}
+
+bool WiFiCredentialManager::checkSavedCredentials() {
+  nvs_handle_t h;
+  if (nvs_open(kNamespace, NVS_READONLY, &h) != ESP_OK) {
+    return false;
+  }
+  size_t ss = sizeof(ssidBuf);
+  size_t sp = sizeof(passBuf);
+  esp_err_t ers = nvs_get_str(h, kKeySsid, ssidBuf, &ss);
+  esp_err_t erp = nvs_get_str(h, kKeyPass, passBuf, &sp);
+  nvs_close(h);
+  if (ers != ESP_OK || erp != ESP_OK) return false;
+  if (!validateSSID(ssidBuf) || !validatePASS(passBuf)) return false;
+  return true;
+}
+
+void WiFiCredentialManager::startButtonTask() {
+  if (!sBtnTask) {
+    xTaskCreatePinnedToCore(buttonTaskThunk, "btn", 2048, nullptr, 1, &sBtnTask, 1);
+  }
+}
+
+void WiFiCredentialManager::startProvisioningTask() {
+  if (!sProvTask) {
+    xTaskCreatePinnedToCore(provTaskThunk, "prov", 2048, this, 1, &sProvTask, 1);
+  }
+}
+
+void WiFiCredentialManager::handleBluetoothProvisioning() {
+  // Build device name
+  uint8_t mac[6] = {0};
+#ifdef ARDUINO_ARCH_ESP32
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+#endif
+  char devName[16];
+  snprintf(devName, sizeof(devName), "%s", kDevPrefix);
+  size_t len = strnlen(devName, sizeof(devName));
+  snprintf(devName + len, sizeof(devName) - len, "%02X%02X%02X%02X%02X", mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+  TickType_t startTick = xTaskGetTickCount();
+
+#if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
+  // Start BLE (NimBLE)
+  NimBLEDevice::init(devName);
+  NimBLEServer* server = NimBLEDevice::createServer();
+  NimBLEService* svc = server->createService("FFF0");
+  NimBLECharacteristic* ssidChar = svc->createCharacteristic("FFF1", NIMBLE_PROPERTY::WRITE);
+  NimBLECharacteristic* passChar = svc->createCharacteristic("FFF2", NIMBLE_PROPERTY::WRITE);
+  sStatusChar = svc->createCharacteristic("FFF3", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  NimBLECharacteristic* commitChar = svc->createCharacteristic("FFF4", NIMBLE_PROPERTY::WRITE);
+
+  ssidChar->setCallbacks(&sSsidCb);
+  passChar->setCallbacks(&sPassCb);
+  commitChar->setCallbacks(&sCommitCb);
+
+  svc->start();
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  adv->addServiceUUID(svc->getUUID());
+  adv->start();
+
+  char statusBuf[96];
+  for (;;) {
+    EventBits_t bits = xEventGroupGetBits(sEvtGroup);
+    if (bits & EVT_PROV_COMMIT) {
+      bool okS = validateSSID(ssidBuf);
+      bool okP = validatePASS(passBuf);
+      char masked[65];
+      maskPass(passBuf, masked, sizeof(masked));
+      if (okS && okP) {
+        // Store in NVS
+        nvs_handle_t h;
+        if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
+          esp_err_t ers = nvs_set_str(h, kKeySsid, ssidBuf);
+          esp_err_t erp = nvs_set_str(h, kKeyPass, passBuf);
+          esp_err_t cm = nvs_commit(h);
+          nvs_close(h);
+          if (ers == ESP_OK && erp == ESP_OK && cm == ESP_OK) {
+            snprintf(statusBuf, sizeof(statusBuf), "STORED SSID:%s PASS:%s", ssidBuf, masked);
+            sStatusChar->setValue((uint8_t*)statusBuf, strnlen(statusBuf, sizeof(statusBuf)));
+            sStatusChar->notify();
+            xEventGroupSetBits(sEvtGroup, EVT_PROV_DONE);
+            break;
+          } else {
+            snprintf(statusBuf, sizeof(statusBuf), "NVS_ERR");
+            sStatusChar->setValue((uint8_t*)statusBuf, strnlen(statusBuf, sizeof(statusBuf)));
+            sStatusChar->notify();
+          }
+        }
+      } else {
+        snprintf(statusBuf, sizeof(statusBuf), okS ? "INVALID_PASS" : "INVALID_SSID");
+        sStatusChar->setValue((uint8_t*)statusBuf, strnlen(statusBuf, sizeof(statusBuf)));
+        sStatusChar->notify();
+      }
+      // Reset commit bit
+      xEventGroupClearBits(sEvtGroup, EVT_PROV_COMMIT);
+    }
+    // Timeout
+    if ((xTaskGetTickCount() - startTick) > pdMS_TO_TICKS(60000)) {
+      sStatusChar->setValue((uint8_t*)"TIMEOUT", 7);
+      sStatusChar->notify();
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+
+  NimBLEDevice::stopAdvertising();
+  NimBLEDevice::deinit(true);
+#else
+  // Fallback: Classic Bluetooth SPP (polling)
+  SerialBT.begin(devName);
+  char inBuf[96];
+  size_t idx = 0;
+  enum { WAIT, GOT_SSID, GOT_PASS } state = WAIT;
+  for (;;) {
+    while (SerialBT.available()) {
+      char c = (char)SerialBT.read();
+      if (c == '\n' || c == '\r') {
+        inBuf[idx] = '\0';
+        idx = 0;
+        if (state == WAIT && strncmp(inBuf, "SSID=", 5) == 0) {
+          strncpy(ssidBuf, inBuf + 5, sizeof(ssidBuf) - 1);
+          state = GOT_SSID;
+          SerialBT.println("OK SSID");
+        } else if (state == GOT_SSID && strncmp(inBuf, "PASS=", 5) == 0) {
+          strncpy(passBuf, inBuf + 5, sizeof(passBuf) - 1);
+          state = GOT_PASS;
+          SerialBT.println("OK PASS");
+        } else if (state == GOT_PASS && strcmp(inBuf, "COMMIT") == 0) {
+          bool okS = validateSSID(ssidBuf);
+          bool okP = validatePASS(passBuf);
+          if (okS && okP) {
+            nvs_handle_t h;
+            if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
+              esp_err_t ers = nvs_set_str(h, kKeySsid, ssidBuf);
+              esp_err_t erp = nvs_set_str(h, kKeyPass, passBuf);
+              esp_err_t cm = nvs_commit(h);
+              nvs_close(h);
+              if (ers == ESP_OK && erp == ESP_OK && cm == ESP_OK) {
+                SerialBT.println("STORED");
+                xEventGroupSetBits(sEvtGroup, EVT_PROV_DONE);
+                goto endBT;
+              } else {
+                SerialBT.println("NVS_ERR");
+              }
+            }
+          } else {
+            SerialBT.println(okS ? "INVALID_PASS" : "INVALID_SSID");
+          }
+        }
+        memset(inBuf, 0, sizeof(inBuf));
+      } else if (idx < sizeof(inBuf) - 1) {
+        inBuf[idx++] = c;
+      }
+    }
+    if ((xTaskGetTickCount() - startTick) > pdMS_TO_TICKS(60000)) {
+      SerialBT.println("TIMEOUT");
+      break;
+    }
+    vTaskDelay(pdMS_TO_TICKS(20));
+  }
+endBT:
+  SerialBT.end();
+#endif
+
+  // Cleanup sensitive buffer
+  memset(passBuf, 0, sizeof(passBuf));
+}

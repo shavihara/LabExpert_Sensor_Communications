@@ -1,4 +1,7 @@
 #include <WiFi.h>
+#include "wifi_credentials.h"
+
+WiFiCredentialManager wifiMgr;
 #include <WebServer.h>
 #include <Update.h>
 #include <Wire.h>
@@ -19,10 +22,7 @@ static String getDeviceIDFromMAC();
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
 
-// Wi-Fi credentials - Connect to device hotspot
-const char *ssid = "LabExpert_1.0"; // Change this to your device hotspot name
-const char *password = "11111111";  // Change this to your hotspot password
-// Use DHCP to get IP from hotspot
+// Wi-Fi credentials are managed via WiFiCredentialManager (BLE + NVS)
 
 // Web server
 WebServer server(80);
@@ -391,6 +391,8 @@ void handleUDPDiscovery()
 // ========== Setup ==========
 void setup()
 {
+  wifiMgr.begin();
+  wifiMgr.connectWiFi();
   Serial.begin(115200);
   const esp_partition_t *running = esp_ota_get_running_partition();
   Serial.printf("Booting from partition: %s\n", running->label);
@@ -450,18 +452,13 @@ void setup()
   // Erase inactive partition to allow clean OTA
   eraseInactivePartition();
 
-  // Use DHCP for network compatibility
-  WiFi.mode(WIFI_STA);
-
-  WiFi.begin(ssid, password);
-  Serial.printf("Connecting to WiFi SSID: %s\n", ssid);
-  while (WiFi.status() != WL_CONNECTED)
-  {
-    delay(500);
-    Serial.print(".");
+  // WiFi is connected via WiFiCredentialManager
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("\n✓ Connected to WiFi, IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("✘ WiFi not connected");
   }
-  Serial.print("\n✓ Connected to WiFi, IP: ");
-  Serial.println(WiFi.localIP());
 
   deviceID = getDeviceIDFromMAC();
   Serial.printf("DeviceID: %s\n", deviceID.c_str());
@@ -494,8 +491,7 @@ void loop()
   {
     Serial.println("✘ WiFi lost. Reconnecting...");
     WiFi.disconnect();
-    WiFi.begin(ssid, password);
-    delay(5000);
+    wifiMgr.connectWiFi();
   }
 
   // Periodic sensor presence check

@@ -4,7 +4,8 @@ sequenceDiagram
   participant Flash as Partition (ota_x)
 
   Backend->>ESP32: POST /ota/begin { size }
-  ESP32->>ESP32: Update.begin(size); otaInProgress=true
+  ESP32->>ESP32: Initialize OTA (Update.begin(size))
+  Note over ESP32: otaInProgress = true
   ESP32-->>Backend: { success:true }
 
   loop For each hex chunk
@@ -30,4 +31,3 @@ sequenceDiagram
   else failure
     ESP32-->>Backend: { success:false }
   end
-

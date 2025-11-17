@@ -39,9 +39,18 @@ if (Test-Command git) {
   try { $branch = (git rev-parse --abbrev-ref HEAD).Trim() } catch {}
 }
 
-# Generate PDF via pandoc if available
-if (Test-Command pandoc) {
-  Write-Host "Found pandoc. Generating PDF..."
+function Get-PandocPath {
+  if (Test-Command pandoc) { return "pandoc" }
+  $default = "C:\\Program Files\\Pandoc\\pandoc.exe"
+  if (Test-Path $default) { return $default }
+  $local = Join-Path $Env:LOCALAPPDATA "Pandoc\\pandoc.exe"
+  if (Test-Path $local) { return $local }
+  return $null
+}
+
+$pandocPath = Get-PandocPath
+if ($pandocPath) {
+  Write-Host "Found pandoc. Generating documents..."
   $md = "$DocsDir\ESP32_OTA_Documentation.md"
   $tmp = Join-Path $OutDir "ESP32_OTA_Documentation_with_meta.md"
   $content = Get-Content $md
@@ -57,11 +66,22 @@ if (Test-Command pandoc) {
     ""
   )
   $meta + $content | Set-Content -Path $tmp -Encoding UTF8
-  pandoc "$tmp" -o "$OutDir\ESP32_OTA_Documentation.pdf" --from gfm --pdf-engine wkhtmltopdf -V margin=1in
-  Write-Host "PDF generated at $OutDir\ESP32_OTA_Documentation.pdf"
+
+  # Always generate HTML and DOCX
+  & $pandocPath "$tmp" -o "$OutDir\ESP32_OTA_Documentation.html" --from gfm
+  & $pandocPath "$tmp" -o "$OutDir\ESP32_OTA_Documentation.docx" --from gfm
+  Write-Host "HTML/DOCX generated."
+
+  # Try PDF via wkhtmltopdf if available
+  $wkhtmlOk = Test-Command wkhtmltopdf
+  if ($wkhtmlOk) {
+    & $pandocPath "$tmp" -o "$OutDir\ESP32_OTA_Documentation.pdf" --from gfm --pdf-engine wkhtmltopdf -V margin=1in
+    Write-Host "PDF generated at $OutDir\ESP32_OTA_Documentation.pdf"
+  } else {
+    Write-Warning "wkhtmltopdf not found. Skipping PDF; HTML and DOCX were generated."
+  }
 } else {
-  Write-Warning "pandoc not found. Install pandoc and a PDF engine (wkhtmltopdf) to generate the PDF."
+  Write-Warning "pandoc not found. Install pandoc to generate HTML/DOCX/PDF."
 }
 
 Write-Host "Done."
-

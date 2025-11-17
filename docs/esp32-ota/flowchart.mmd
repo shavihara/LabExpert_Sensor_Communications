@@ -10,11 +10,11 @@ flowchart TD
   H --> C
 
   G --> I{OTA path}
-  I -->|Web upload| J[/POST /update/]
-  I -->|Backend push| K[/begin/write/end/]
+  I -->|Web upload| J[POST /update]
+  I -->|Backend push| K[begin/write/end]
 
   J --> L[Stream Update.write]
-  L --> M{Update.end(true)}
+  L --> M{Update.end success?}
   K --> N[Validate JSON/hex/size]
   N --> O[Stream Update.write]
   O --> M
@@ -28,4 +28,3 @@ flowchart TD
   S -->|FAIL| U[cleanFirmwareAndBootOTA]
   U --> V[esp_ota_set_boot_partition]
   V --> P
-

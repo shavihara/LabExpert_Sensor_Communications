@@ -40,3 +40,6 @@ Thumbs.db
 .idea/
 Datasheet/
 .trae
+
+bluetoothConfigeration/DT
+bluetoothConfigeration/.vscode
