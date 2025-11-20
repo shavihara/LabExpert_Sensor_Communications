@@ -391,9 +391,25 @@ void handleUDPDiscovery()
 // ========== Setup ==========
 void setup()
 {
-  wifiMgr.begin();
-  wifiMgr.connectWiFi();
   Serial.begin(115200);
+  delay(1000); // Wait for serial to stabilize
+  
+  wifiMgr.begin();
+  
+  // Check if we have stored WiFi credentials
+  if (wifiMgr.checkSavedCredentials()) {
+    Serial.println("✓ Found stored WiFi credentials - attempting to connect...");
+    if (wifiMgr.connectWiFi()) {
+      Serial.print("✓ Connected to WiFi, IP: ");
+      Serial.println(WiFi.localIP());
+    } else {
+      Serial.println("✘ Failed to connect with stored credentials");
+      // Bluetooth provisioning is already started by wifiMgr.begin() when no credentials exist
+    }
+  } else {
+    Serial.println("✗ No stored WiFi credentials found");
+    // Bluetooth provisioning is already started by wifiMgr.begin() when no credentials exist
+  }
   const esp_partition_t *running = esp_ota_get_running_partition();
   Serial.printf("Booting from partition: %s\n", running->label);
   Serial.println("OTA Bootloader Starting...");
@@ -456,46 +472,61 @@ void setup()
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("\n✓ Connected to WiFi, IP: ");
     Serial.println(WiFi.localIP());
+
+    deviceID = getDeviceIDFromMAC();
+    Serial.printf("DeviceID: %s\n", deviceID.c_str());
+
+    // Only set up network services if WiFi is connected
+    setupRoutes();
+    server.begin();
+
+    // Initialize UDP for discovery
+    if (udp.begin(UDP_DISCOVERY_PORT))
+    {
+      Serial.printf("✓ UDP discovery server started on port %d\n", UDP_DISCOVERY_PORT);
+    }
+    else
+    {
+      Serial.println("✘ Failed to start UDP discovery server");
+    }
+
+    Serial.println("✓ OTA Server ready.");
   } else {
-    Serial.println("✘ WiFi not connected");
+    Serial.println("✘ WiFi not connected - skipping network services setup");
+    
+    // Still get device ID for identification purposes
+    deviceID = getDeviceIDFromMAC();
+    Serial.printf("DeviceID: %s\n", deviceID.c_str());
+    
+    Serial.println("✓ Bluetooth provisioning mode active.");
   }
-
-  deviceID = getDeviceIDFromMAC();
-  Serial.printf("DeviceID: %s\n", deviceID.c_str());
-
-  setupRoutes();
-  server.begin();
-
-  // Initialize UDP for discovery
-  if (udp.begin(UDP_DISCOVERY_PORT))
-  {
-    Serial.printf("✓ UDP discovery server started on port %d\n", UDP_DISCOVERY_PORT);
-  }
-  else
-  {
-    Serial.println("✘ Failed to start UDP discovery server");
-  }
-
-  Serial.println("✓ OTA Server ready.");
 }
 
 // ========== Main Loop ==========
 void loop()
 {
-  server.handleClient();
+  // Only handle network services if WiFi is connected
+  if (WiFi.status() == WL_CONNECTED) {
+    server.handleClient();
+    handleUDPDiscovery();
+  }
+  
   handleWifiLed();
   handleSensorLed();
-  handleUDPDiscovery();
 
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("✘ WiFi lost. Reconnecting...");
-    WiFi.disconnect();
-    wifiMgr.connectWiFi();
+    // Don't try to reconnect if we're in Bluetooth provisioning mode
+    // The WiFiCredentialManager will handle reconnection if credentials become available
+    static unsigned long lastBluetoothStatus = 0;
+    if (millis() - lastBluetoothStatus >= 10000) {
+      lastBluetoothStatus = millis();
+      Serial.println("ⓘ Bluetooth provisioning mode active - waiting for credentials...");
+    }
   }
 
-  // Periodic sensor presence check
-  if (millis() - lastSensorCheck >= sensorCheckInterval)
+  // Periodic sensor presence check - skip during Bluetooth provisioning to avoid interference
+  if (WiFi.status() == WL_CONNECTED && millis() - lastSensorCheck >= sensorCheckInterval)
   {
     lastSensorCheck = millis();
     String prev = sensorType;

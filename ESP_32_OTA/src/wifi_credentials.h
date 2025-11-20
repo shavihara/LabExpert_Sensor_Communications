@@ -45,9 +45,18 @@ public:
    */
   bool connectWiFi();
 
-  private:
+  /**
+   * @brief Check if valid WiFi credentials are stored in NVS
+   * @return true if valid credentials exist
+   */
   bool checkSavedCredentials();
+
+  /**
+   * @brief Start Bluetooth LE provisioning mode
+   */
   void handleBluetoothProvisioning();
+
+  private:
   friend void provTaskThunk(void* arg);
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
   friend class WcmSsidCallbacks;
@@ -61,4 +70,7 @@ public:
   // Internal state
   void startButtonTask();
   void startProvisioningTask();
+  unsigned long lastCommitWindowStart = 0;
+  int commitAttempts = 0;
+  bool isRateLimited();
 };

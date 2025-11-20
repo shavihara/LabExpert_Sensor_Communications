@@ -12,6 +12,8 @@
 
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
 #include <NimBLEDevice.h>
+#include <mbedtls/aes.h>
+#include <mbedtls/sha256.h>
 #else
 #include <BluetoothSerial.h>
 static BluetoothSerial SerialBT;
@@ -20,12 +22,14 @@ static BluetoothSerial SerialBT;
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/event_groups.h>
+#include <vector>
 
 // PROGMEM static strings
 static const char kNamespace[] = "wifi";
 static const char kKeySsid[]   = "ssid";
 static const char kKeyPass[]   = "pass";
-static const char kDevPrefix[] = "ESP32-";
+static const char kDevPrefix[] = "ESP32_OTA_";
+static const uint8_t kBleSecret[] = { 'D','E','V','_','S','E','C','R','E','T' };
 
 // Event bits
 static const EventBits_t EVT_WIFI_GOT_IP    = BIT0;
@@ -75,6 +79,9 @@ static void maskPass(const char* in, char* out, size_t outSize) {
 // Memory monitoring helpers
 static size_t getFreeHeap() { return esp_get_free_heap_size(); }
 static size_t getMinFreeHeap() { return esp_get_minimum_free_heap_size(); }
+
+static void sha256(const uint8_t* in, size_t n, uint8_t out[32]);
+static void aes_cbc_decrypt(const uint8_t* key, const uint8_t* iv_ct, size_t len, std::vector<uint8_t>& out);
 
 // BLE callbacks (NimBLE)
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
@@ -210,7 +217,7 @@ void WiFiCredentialManager::startButtonTask() {
 
 void WiFiCredentialManager::startProvisioningTask() {
   if (!sProvTask) {
-    xTaskCreatePinnedToCore(provTaskThunk, "prov", 2048, this, 1, &sProvTask, 1);
+    xTaskCreatePinnedToCore(provTaskThunk, "prov", 6144, this, 1, &sProvTask, 1);
   }
 }
 
@@ -218,9 +225,9 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   // Build device name
   uint8_t mac[6] = {0};
 #ifdef ARDUINO_ARCH_ESP32
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  esp_read_mac(mac, ESP_MAC_BT);
 #endif
-  char devName[16];
+  char devName[24];
   snprintf(devName, sizeof(devName), "%s", kDevPrefix);
   size_t len = strnlen(devName, sizeof(devName));
   snprintf(devName + len, sizeof(devName) - len, "%02X%02X%02X%02X%02X", mac[1], mac[2], mac[3], mac[4], mac[5]);
@@ -231,11 +238,11 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   // Start BLE (NimBLE)
   NimBLEDevice::init(devName);
   NimBLEServer* server = NimBLEDevice::createServer();
-  NimBLEService* svc = server->createService("FFF0");
-  NimBLECharacteristic* ssidChar = svc->createCharacteristic("FFF1", NIMBLE_PROPERTY::WRITE);
-  NimBLECharacteristic* passChar = svc->createCharacteristic("FFF2", NIMBLE_PROPERTY::WRITE);
-  sStatusChar = svc->createCharacteristic("FFF3", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  NimBLECharacteristic* commitChar = svc->createCharacteristic("FFF4", NIMBLE_PROPERTY::WRITE);
+  NimBLEService* svc = server->createService("0000FFF0-0000-1000-8000-00805F9B34FB");
+  NimBLECharacteristic* ssidChar = svc->createCharacteristic("0000FFF1-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
+  NimBLECharacteristic* passChar = svc->createCharacteristic("0000FFF2-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
+  sStatusChar = svc->createCharacteristic("0000FFF3-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  NimBLECharacteristic* commitChar = svc->createCharacteristic("0000FFF4-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
 
   ssidChar->setCallbacks(&sSsidCb);
   passChar->setCallbacks(&sPassCb);
@@ -244,12 +251,22 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   svc->start();
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(svc->getUUID());
+  adv->setScanResponse(true);
   adv->start();
 
+  auto nowMs = [](){ return (uint32_t)(xTaskGetTickCount()*portTICK_PERIOD_MS); };
   char statusBuf[96];
+  uint32_t startDeadline = nowMs() + 30000;
   for (;;) {
+    // Check for provisioning events
     EventBits_t bits = xEventGroupGetBits(sEvtGroup);
     if (bits & EVT_PROV_COMMIT) {
+      if (isRateLimited()) {
+        sStatusChar->setValue((uint8_t*)"RATE_LIMITED", 12);
+        sStatusChar->notify();
+        xEventGroupClearBits(sEvtGroup, EVT_PROV_COMMIT);
+        continue;
+      }
       bool okS = validateSSID(ssidBuf);
       bool okP = validatePASS(passBuf);
       char masked[65];
@@ -267,6 +284,23 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
             sStatusChar->setValue((uint8_t*)statusBuf, strnlen(statusBuf, sizeof(statusBuf)));
             sStatusChar->notify();
             xEventGroupSetBits(sEvtGroup, EVT_PROV_DONE);
+            commitAttempts++;
+            if (WiFi.status() != WL_CONNECTED) {
+              WiFi.mode(WIFI_STA);
+              WiFi.begin(ssidBuf, passBuf);
+              TickType_t st = xTaskGetTickCount();
+              while ((xTaskGetTickCount()-st) < pdMS_TO_TICKS(15000)) {
+                if (WiFi.status()==WL_CONNECTED) break;
+                vTaskDelay(pdMS_TO_TICKS(100));
+              }
+            }
+            if (WiFi.status()==WL_CONNECTED) {
+              sStatusChar->setValue((uint8_t*)"WIFI_OK", 7);
+              sStatusChar->notify();
+            } else {
+              sStatusChar->setValue((uint8_t*)"WIFI_FAIL", 9);
+              sStatusChar->notify();
+            }
             break;
           } else {
             snprintf(statusBuf, sizeof(statusBuf), "NVS_ERR");
@@ -282,13 +316,14 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
       // Reset commit bit
       xEventGroupClearBits(sEvtGroup, EVT_PROV_COMMIT);
     }
-    // Timeout
-    if ((xTaskGetTickCount() - startTick) > pdMS_TO_TICKS(60000)) {
+    if (nowMs() > startDeadline) {
       sStatusChar->setValue((uint8_t*)"TIMEOUT", 7);
       sStatusChar->notify();
-      break;
+      startDeadline = nowMs() + 30000;
     }
-    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    // Yield to allow Bluetooth stack to process events
+    vTaskDelay(pdMS_TO_TICKS(100));
   }
 
   NimBLEDevice::stopAdvertising();
@@ -352,4 +387,40 @@ endBT:
 
   // Cleanup sensitive buffer
   memset(passBuf, 0, sizeof(passBuf));
+}
+
+static void sha256(const uint8_t* in, size_t n, uint8_t out[32]) {
+  mbedtls_sha256(in, n, out, 0);
+}
+
+static void aes_cbc_decrypt(const uint8_t* key, const uint8_t* iv_ct, size_t len, std::vector<uint8_t>& out) {
+  const uint8_t* iv = iv_ct;
+  const uint8_t* ct = iv_ct + 16;
+  size_t ct_len = len - 16;
+  out.resize(ct_len);
+  mbedtls_aes_context ctx;
+  mbedtls_aes_init(&ctx);
+  mbedtls_aes_setkey_dec(&ctx, key, 128);
+  std::vector<uint8_t> buf(ct_len);
+  memcpy(buf.data(), ct, ct_len);
+  uint8_t ivbuf[16];
+  memcpy(ivbuf, iv, 16);
+  mbedtls_aes_crypt_cbc(&ctx, MBEDTLS_AES_DECRYPT, ct_len, ivbuf, buf.data(), out.data());
+  mbedtls_aes_free(&ctx);
+  if (!out.empty()) {
+    uint8_t pad = out.back();
+    if (pad>0 && pad<=16 && out.size()>=pad) {
+      out.resize(out.size()-pad);
+    }
+  }
+}
+
+bool WiFiCredentialManager::isRateLimited() {
+  unsigned long now = millis();
+  if (lastCommitWindowStart==0 || (now - lastCommitWindowStart) > 60000) {
+    lastCommitWindowStart = now;
+    commitAttempts = 0;
+  }
+  if (commitAttempts>=5) return true;
+  return false;
 }
