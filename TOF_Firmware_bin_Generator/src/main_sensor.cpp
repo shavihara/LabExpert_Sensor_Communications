@@ -25,9 +25,17 @@
 // Network configuration
 const char *ssid = "LabExpert_1.0";
 const char *password = "11111111";
-IPAddress local_IP(192, 168, 137, 17);
 IPAddress gateway(192, 168, 137, 1);
 IPAddress subnet(255, 255, 255, 0);
+
+// Dynamic IP configuration
+const int DYNAMIC_IP_BASE = 15;  // Start from .15
+const int DYNAMIC_IP_MAX_ATTEMPTS = 10;  // Try 10 different IPs
+
+// Function prototypes
+bool connectWithDynamicIP();
+bool tryStaticIP(int ipSuffix);
+bool connectWithDHCP();
 
 // MQTT configuration
 const char* mqttBroker = "192.168.137.1";
@@ -64,24 +72,16 @@ void setup() {
         Serial.println("ERROR: Hardware timer initialization failed");
     }
     
-    // Network setup
+    // Network setup with dynamic IP assignment
     WiFi.mode(WIFI_STA);
-    WiFi.config(local_IP, gateway, subnet);
-    WiFi.begin(ssid, password);
     
-    Serial.print("Connecting to WiFi");
-    int wifiAttempts = 0;
-    while (WiFi.status() != WL_CONNECTED && wifiAttempts < 40) {  // Increased from 20 to 40 attempts
-        delay(500); 
-        Serial.print("."); 
-        wifiAttempts++;
-        
-        // Feed the watchdog to prevent resets during WiFi connection
-        yield();
-    }
+    Serial.println("Starting dynamic IP connection...");
     
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\nWiFi connected. IP: %s\n", WiFi.localIP().toString().c_str());
+    // Try dynamic IP assignment (multiple static IPs, then fallback to DHCP)
+    bool wifiConnected = connectWithDynamicIP();
+    
+    if (wifiConnected) {
+        Serial.printf("\n✅ WiFi connected successfully. IP: %s\n", WiFi.localIP().toString().c_str());
         
         // Detect sensor from EEPROM with failsafe mechanism
         bool sensorDetected = detectSensorFromEEPROM();
@@ -234,4 +234,85 @@ void cleanFirmwareAndBootOTA() {
     Serial.println("Restarting ESP32 as fallback...");
     delay(1000);
     ESP.restart();
+}
+
+// ================= DYNAMIC IP IMPLEMENTATION =================
+
+bool connectWithDynamicIP() {
+    Serial.println("🔧 Starting dynamic IP assignment...");
+    
+    // First try multiple static IP addresses
+    for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++) {
+        int ipSuffix = DYNAMIC_IP_BASE + i;
+        Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
+        
+        if (tryStaticIP(ipSuffix)) {
+            Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
+            return true;
+        }
+        
+        // Wait a bit before trying next IP
+        delay(1000);
+    }
+    
+    Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
+    
+    // If all static IPs failed, try DHCP
+    return connectWithDHCP();
+}
+
+bool tryStaticIP(int ipSuffix) {
+    IPAddress local_IP(192, 168, 137, ipSuffix);
+    
+    // Configure static IP
+    if (!WiFi.config(local_IP, gateway, subnet)) {
+        Serial.printf("❌ Failed to configure static IP 192.168.137.%d\n", ipSuffix);
+        return false;
+    }
+    
+    // Connect to WiFi
+    WiFi.begin(ssid, password);
+    
+    Serial.printf("Connecting with IP 192.168.137.%d", ipSuffix);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+        yield(); // Feed watchdog
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\n✅ Connected with IP 192.168.137.%d\n", ipSuffix);
+        return true;
+    }
+    
+    Serial.printf("\n❌ Failed to connect with IP 192.168.137.%d\n", ipSuffix);
+    WiFi.disconnect();
+    delay(500);
+    return false;
+}
+
+bool connectWithDHCP() {
+    Serial.println("🌐 Trying DHCP connection...");
+    
+    // Use DHCP (no static IP configuration)
+    WiFi.begin(ssid, password);
+    
+    Serial.print("Connecting via DHCP");
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 30) {
+        delay(500);
+        Serial.print(".");
+        attempts++;
+        yield(); // Feed watchdog
+    }
+    
+    if (WiFi.status() == WL_CONNECTED) {
+        Serial.printf("\n✅ DHCP connection successful. IP: %s\n", WiFi.localIP().toString().c_str());
+        return true;
+    }
+    
+    Serial.println("\n❌ DHCP connection failed");
+    return false;
 }
