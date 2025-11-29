@@ -20,9 +20,12 @@ static String getDeviceIDFromMAC();
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
 
 // Wi-Fi credentials - Connect to device hotspot
-const char *ssid = "LabExpert_1.0"; // Change this to your device hotspot name
-const char *password = "11111111";  // Change this to your hotspot password
-// Use DHCP to get IP from hotspot
+const char *ssid = "Connectify-1.0";
+const char *password = "11111111";
+IPAddress gateway(192, 168, 137, 1);
+IPAddress subnet(255, 255, 255, 0);
+const int DYNAMIC_IP_BASE = 15;
+const int DYNAMIC_IP_MAX_ATTEMPTS = 10;
 
 // Web server
 WebServer server(80);
@@ -388,6 +391,75 @@ void handleUDPDiscovery()
   }
 }
 
+bool tryStaticIP(int ipSuffix)
+{
+  IPAddress local_IP(192, 168, 137, ipSuffix);
+  if (!WiFi.config(local_IP, gateway, subnet))
+  {
+    Serial.printf("❌ Failed to configure static IP 192.168.137.%d\n", ipSuffix);
+    return false;
+  }
+  WiFi.begin(ssid, password);
+  Serial.printf("Connecting with IP 192.168.137.%d", ipSuffix);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20)
+  {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    yield();
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.printf("\n✅ Connected with IP 192.168.137.%d\n", ipSuffix);
+    return true;
+  }
+  Serial.printf("\n❌ Failed to connect with IP 192.168.137.%d\n", ipSuffix);
+  WiFi.disconnect();
+  delay(500);
+  return false;
+}
+
+bool connectWithDHCP()
+{
+  Serial.println("🌐 Trying DHCP connection...");
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting via DHCP");
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30)
+  {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    yield();
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.printf("\n✅ DHCP connection successful. IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+  }
+  Serial.println("\n❌ DHCP connection failed");
+  return false;
+}
+
+bool connectWithDynamicIP()
+{
+  Serial.println("🔧 Starting dynamic IP assignment...");
+  for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++)
+  {
+    int ipSuffix = DYNAMIC_IP_BASE + i;
+    Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
+    if (tryStaticIP(ipSuffix))
+    {
+      Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
+      return true;
+    }
+    delay(1000);
+  }
+  Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
+  return connectWithDHCP();
+}
+
 // ========== Setup ==========
 void setup()
 {
@@ -450,18 +522,16 @@ void setup()
   // Erase inactive partition to allow clean OTA
   eraseInactivePartition();
 
-  // Use DHCP for network compatibility
   WiFi.mode(WIFI_STA);
-
-  WiFi.begin(ssid, password);
-  Serial.printf("Connecting to WiFi SSID: %s\n", ssid);
-  while (WiFi.status() != WL_CONNECTED)
+  bool wifiConnected = connectWithDynamicIP();
+  if (wifiConnected)
   {
-    delay(500);
-    Serial.print(".");
+    Serial.printf("\n✓ Connected to WiFi, IP: %s\n", WiFi.localIP().toString().c_str());
   }
-  Serial.print("\n✓ Connected to WiFi, IP: ");
-  Serial.println(WiFi.localIP());
+  else
+  {
+    Serial.println("\nWiFi connection failed!");
+  }
 
   deviceID = getDeviceIDFromMAC();
   Serial.printf("DeviceID: %s\n", deviceID.c_str());
@@ -494,8 +564,7 @@ void loop()
   {
     Serial.println("✘ WiFi lost. Reconnecting...");
     WiFi.disconnect();
-    WiFi.begin(ssid, password);
-    delay(5000);
+    connectWithDynamicIP();
   }
 
   // Periodic sensor presence check
