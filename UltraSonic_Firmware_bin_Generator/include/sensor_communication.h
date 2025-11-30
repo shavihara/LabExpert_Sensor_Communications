@@ -15,6 +15,9 @@
 #define TRIG_PIN 21
 #define ECHO_PIN 22
 
+// Status LED pins
+#define SENSOR_LED 13
+
 // EEPROM configuration
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3

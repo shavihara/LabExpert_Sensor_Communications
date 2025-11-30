@@ -15,7 +15,7 @@ extern VL53L1X tofSensor;
 #define TOF_SCL 22
 
 // LED Configuration
-#define STATUS_LED 2
+#define SENSOR_LED 13
 
 // EEPROM configuration
 #define EEPROM_SENSOR_ADDR 0x50
