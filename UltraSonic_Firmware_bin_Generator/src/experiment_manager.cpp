@@ -9,9 +9,7 @@
 #include <freertos/queue.h>
 #include <freertos/task.h>
 
-#define STATUS_LED 13
-#define WIFI_LED 14
-#define SENSOR_LED 13
+
 
 // Experiment data arrays
 float distances[MAX_SAMPLES];

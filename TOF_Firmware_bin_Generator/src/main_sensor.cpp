@@ -23,7 +23,7 @@
 #define TOF_SCL 22
 
 // Network configuration
-const char *ssid = "Connectify-LabExpert_1.0";
+const char *ssid = "Connectify-1.0";
 const char *password = "11111111";
 IPAddress gateway(192, 168, 137, 1);
 IPAddress subnet(255, 255, 255, 0);

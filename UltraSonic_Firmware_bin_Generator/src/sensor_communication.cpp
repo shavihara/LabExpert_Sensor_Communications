@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include "config_handler.h"
+#include "experiment_manager.h"
 
 // Global variables
 SensorCalibration calibration;
@@ -58,7 +59,7 @@ bool detectSensorFromEEPROM()
                     String eepromData = String(buffer);
                     Serial.printf("EEPROM data: %s\n", eepromData.c_str());
 
-                    if (eepromData == "ULT")
+                    if (eepromData == "ULT" || eepromData == "TOF")
                     {
                         sensorType = eepromData;
                         sensorLedState = true;
@@ -67,7 +68,7 @@ bool detectSensorFromEEPROM()
                     else
                     {
                         sensorType = eepromData;
-                        Serial.println("⚠️ WARNNING!(Sensor Type: %s, ID: %s not copatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
+                        Serial.printf("⚠️ WARNNING!(Sensor Type: %s, ID: %s not copatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
                         return false;
                     }
                     Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
