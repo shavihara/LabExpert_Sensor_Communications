@@ -22,7 +22,13 @@ static String getDeviceIDFromMAC();
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
 
-// Wi-Fi credentials are managed via WiFiCredentialManager (BLE + NVS)
+// Wi-Fi credentials - Connect to device hotspot
+const char *ssid = "Connectify-1.0";
+const char *password = "11111111";
+IPAddress gateway(192, 168, 137, 1);
+IPAddress subnet(255, 255, 255, 0);
+const int DYNAMIC_IP_BASE = 15;
+const int DYNAMIC_IP_MAX_ATTEMPTS = 10;
 
 // Web server
 WebServer server(80);
@@ -388,6 +394,75 @@ void handleUDPDiscovery()
   }
 }
 
+bool tryStaticIP(int ipSuffix)
+{
+  IPAddress local_IP(192, 168, 137, ipSuffix);
+  if (!WiFi.config(local_IP, gateway, subnet))
+  {
+    Serial.printf("❌ Failed to configure static IP 192.168.137.%d\n", ipSuffix);
+    return false;
+  }
+  WiFi.begin(ssid, password);
+  Serial.printf("Connecting with IP 192.168.137.%d", ipSuffix);
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 20)
+  {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    yield();
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.printf("\n✅ Connected with IP 192.168.137.%d\n", ipSuffix);
+    return true;
+  }
+  Serial.printf("\n❌ Failed to connect with IP 192.168.137.%d\n", ipSuffix);
+  WiFi.disconnect();
+  delay(500);
+  return false;
+}
+
+bool connectWithDHCP()
+{
+  Serial.println("🌐 Trying DHCP connection...");
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting via DHCP");
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30)
+  {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    yield();
+  }
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    Serial.printf("\n✅ DHCP connection successful. IP: %s\n", WiFi.localIP().toString().c_str());
+    return true;
+  }
+  Serial.println("\n❌ DHCP connection failed");
+  return false;
+}
+
+bool connectWithDynamicIP()
+{
+  Serial.println("🔧 Starting dynamic IP assignment...");
+  for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++)
+  {
+    int ipSuffix = DYNAMIC_IP_BASE + i;
+    Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
+    if (tryStaticIP(ipSuffix))
+    {
+      Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
+      return true;
+    }
+    delay(1000);
+  }
+  Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
+  return connectWithDHCP();
+}
+
 // ========== Setup ==========
 void setup()
 {
@@ -468,13 +543,16 @@ void setup()
   // Erase inactive partition to allow clean OTA
   eraseInactivePartition();
 
-  // WiFi is connected via WiFiCredentialManager
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("\n✓ Connected to WiFi, IP: ");
-    Serial.println(WiFi.localIP());
-
-    deviceID = getDeviceIDFromMAC();
-    Serial.printf("DeviceID: %s\n", deviceID.c_str());
+  WiFi.mode(WIFI_STA);
+  bool wifiConnected = connectWithDynamicIP();
+  if (wifiConnected)
+  {
+    Serial.printf("\n✓ Connected to WiFi, IP: %s\n", WiFi.localIP().toString().c_str());
+  }
+  else
+  {
+    Serial.println("\nWiFi connection failed!");
+  }
 
     // Only set up network services if WiFi is connected
     setupRoutes();
@@ -516,13 +594,9 @@ void loop()
 
   if (WiFi.status() != WL_CONNECTED)
   {
-    // Don't try to reconnect if we're in Bluetooth provisioning mode
-    // The WiFiCredentialManager will handle reconnection if credentials become available
-    static unsigned long lastBluetoothStatus = 0;
-    if (millis() - lastBluetoothStatus >= 10000) {
-      lastBluetoothStatus = millis();
-      Serial.println("ⓘ Bluetooth provisioning mode active - waiting for credentials...");
-    }
+    Serial.println("✘ WiFi lost. Reconnecting...");
+    WiFi.disconnect();
+    connectWithDynamicIP();
   }
 
   // Periodic sensor presence check - skip during Bluetooth provisioning to avoid interference

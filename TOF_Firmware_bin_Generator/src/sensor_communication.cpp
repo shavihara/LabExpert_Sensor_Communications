@@ -70,12 +70,12 @@ bool detectSensorFromEEPROM()
                     {
                         sensorType = eepromData;
                         sensorLedState = true;
-                        digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+                        digitalWrite(STATUS_LED, sensorLedState ? LOW : HIGH);
                     }
                     else
                     {
                         sensorType = eepromData;
-                        Serial.printf("⚠️ WARNING!(Sensor Type: %s, ID: %s not compatible with this firmware)\n ♻ REBOOTING OTA", sensorType.c_str(), sensorID.c_str());
+                        Serial.printf("⚠️ WARNNING!(Sensor Type: %s, ID: %s not copatible with this firmware)\n ♻ REBOOTING OTA\n", sensorType.c_str(), sensorID.c_str());
                         return false;
                     }
                     Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
