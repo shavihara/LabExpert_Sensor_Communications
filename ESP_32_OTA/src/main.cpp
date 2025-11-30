@@ -22,17 +22,19 @@ static String getDeviceIDFromMAC();
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
 
-// Wi-Fi credentials - Connect to device hotspot
-const char *ssid = "Connectify-1.0";
-const char *password = "11111111";
+// Wi-Fi credentials - Managed by WiFiCredentialManager
+// const char* ssid = "LabExpert_Hotspot"; // REMOVED
+// const char* password = "password123";     // REMOVED
 IPAddress gateway(192, 168, 137, 1);
 IPAddress subnet(255, 255, 255, 0);
-const int DYNAMIC_IP_BASE = 15;
+
+// Dynamic IP settings
 const int DYNAMIC_IP_MAX_ATTEMPTS = 10;
+const int DYNAMIC_IP_BASE = 100;
 
 // Web server
 WebServer server(80);
-String deviceID = "ESP32";
+String deviceID = "LabExpertModule";
 const char *backendHost = "192.168.1.198"; // Backend server IP - Use the IP of your device running the backend
 // const char* backendHost = "192.168.137.1";  Backend server IP - Connect to hotspot interface
 const uint16_t backendPort = 5000;
@@ -164,9 +166,24 @@ bool detectSensor()
 // ========== Wi-Fi LED status ==========
 void handleWifiLed()
 {
-  if (WiFi.status() == WL_CONNECTED)
+  unsigned long now = millis();
+  
+  // Check if in Bluetooth provisioning mode (not connected and no saved credentials)
+  bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
+  
+  if (bluetoothMode)
   {
-    unsigned long now = millis();
+    // Fast blink for Bluetooth provisioning mode (500ms interval)
+    if (now - previousWifiLedMillis >= 500)
+    {
+      previousWifiLedMillis = now;
+      wifiLedState = !wifiLedState;
+      digitalWrite(WIFI_LED, wifiLedState ? LOW : HIGH);
+    }
+  }
+  else if (WiFi.status() == WL_CONNECTED)
+  {
+    // Slow blink when WiFi connected (3000ms interval)
     if (now - previousWifiLedMillis >= ledInterval)
     {
       previousWifiLedMillis = now;
@@ -176,7 +193,8 @@ void handleWifiLed()
   }
   else
   {
-    digitalWrite(WIFI_LED, LOW); // solid ON when disconnected
+    // Solid ON when disconnected but have credentials
+    digitalWrite(WIFI_LED, LOW);
   }
 }
 
@@ -184,8 +202,23 @@ void handleWifiLed()
 void handleSensorLed()
 {
   unsigned long now = millis();
-  if (sensorType != "UNKNOWN")
+  
+  // Check if in Bluetooth provisioning mode
+  bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
+  
+  if (bluetoothMode)
   {
+    // Fast blink for Bluetooth provisioning mode (500ms interval)
+    if (now - previousSensorLedMillis >= 500)
+    {
+      previousSensorLedMillis = now;
+      sensorLedState = !sensorLedState;
+      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+    }
+  }
+  else if (sensorType != "UNKNOWN")
+  {
+    // Slow blink when sensor detected (3000ms interval)
     if (now - previousSensorLedMillis >= ledInterval)
     {
       previousSensorLedMillis = now;
@@ -195,7 +228,8 @@ void handleSensorLed()
   }
   else
   {
-    digitalWrite(SENSOR_LED, LOW); // solid ON if no sensor
+    // Solid ON if no sensor
+    digitalWrite(SENSOR_LED, LOW);
   }
 }
 
@@ -394,7 +428,7 @@ void handleUDPDiscovery()
   }
 }
 
-bool tryStaticIP(int ipSuffix)
+bool tryStaticIP(int ipSuffix, const char* ssid, const char* password)
 {
   IPAddress local_IP(192, 168, 137, ipSuffix);
   if (!WiFi.config(local_IP, gateway, subnet))
@@ -423,7 +457,7 @@ bool tryStaticIP(int ipSuffix)
   return false;
 }
 
-bool connectWithDHCP()
+bool connectWithDHCP(const char* ssid, const char* password)
 {
   Serial.println("🌐 Trying DHCP connection...");
   WiFi.begin(ssid, password);
@@ -447,12 +481,20 @@ bool connectWithDHCP()
 
 bool connectWithDynamicIP()
 {
-  Serial.println("🔧 Starting dynamic IP assignment...");
+  if (!wifiMgr.checkSavedCredentials()) {
+    Serial.println("❌ No saved credentials found in WiFiCredentialManager");
+    return false;
+  }
+
+  const char* ssid = wifiMgr.getSSID();
+  const char* password = wifiMgr.getPassword();
+
+  Serial.printf("🔧 Starting dynamic IP assignment for SSID: %s\n", ssid);
   for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++)
   {
     int ipSuffix = DYNAMIC_IP_BASE + i;
     Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
-    if (tryStaticIP(ipSuffix))
+    if (tryStaticIP(ipSuffix, ssid, password))
     {
       Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
       return true;
@@ -460,7 +502,7 @@ bool connectWithDynamicIP()
     delay(1000);
   }
   Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
-  return connectWithDHCP();
+  return connectWithDHCP(ssid, password);
 }
 
 // ========== Setup ==========
@@ -544,15 +586,18 @@ void setup()
   eraseInactivePartition();
 
   WiFi.mode(WIFI_STA);
-  bool wifiConnected = connectWithDynamicIP();
+  
+  // Check if already connected via wifiMgr
+  bool wifiConnected = (WiFi.status() == WL_CONNECTED);
+  
+  // If not connected, try dynamic IP fallback
+  if (!wifiConnected) {
+    wifiConnected = connectWithDynamicIP();
+  }
+
   if (wifiConnected)
   {
     Serial.printf("\n✓ Connected to WiFi, IP: %s\n", WiFi.localIP().toString().c_str());
-  }
-  else
-  {
-    Serial.println("\nWiFi connection failed!");
-  }
 
     // Only set up network services if WiFi is connected
     setupRoutes();
@@ -570,6 +615,7 @@ void setup()
 
     Serial.println("✓ OTA Server ready.");
   } else {
+    Serial.println("\nWiFi connection failed!");
     Serial.println("✘ WiFi not connected - skipping network services setup");
     
     // Still get device ID for identification purposes
@@ -594,9 +640,37 @@ void loop()
 
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("✘ WiFi lost. Reconnecting...");
-    WiFi.disconnect();
-    connectWithDynamicIP();
+    // Only try to reconnect if we have saved credentials
+    // Otherwise, rely on Bluetooth provisioning (already started in setup)
+    if (wifiMgr.checkSavedCredentials())
+    {
+      Serial.println("✘ WiFi lost. Reconnecting...");
+      
+      // Stop UDP before disconnecting WiFi to prevent socket errors
+      udp.stop();
+      
+      WiFi.disconnect();
+      
+      // Try to reconnect
+      if (connectWithDynamicIP())
+      {
+        // Restart UDP after successful reconnection
+        if (udp.begin(UDP_DISCOVERY_PORT))
+        {
+          Serial.printf("✓ UDP discovery server restarted on port %d\n", UDP_DISCOVERY_PORT);
+        }
+        else
+        {
+          Serial.println("✘ Failed to restart UDP discovery server");
+        }
+      }
+    }
+    else
+    {
+      // No credentials available - Bluetooth provisioning should be active
+      // Just delay to avoid spamming the loop
+      delay(1000);
+    }
   }
 
   // Periodic sensor presence check - skip during Bluetooth provisioning to avoid interference

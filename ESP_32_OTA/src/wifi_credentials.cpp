@@ -28,7 +28,7 @@ static BluetoothSerial SerialBT;
 static const char kNamespace[] = "wifi";
 static const char kKeySsid[]   = "ssid";
 static const char kKeyPass[]   = "pass";
-static const char kDevPrefix[] = "ESP32_OTA_";
+static const char kDevPrefix[] = "LabExpertOTA";
 static const uint8_t kBleSecret[] = { 'D','E','V','_','S','E','C','R','E','T' };
 
 // Event bits
@@ -39,7 +39,7 @@ static const EventBits_t EVT_PROV_DONE      = BIT3;
 
 // Button pin
 #ifndef WCM_BUTTON_PIN
-#define WCM_BUTTON_PIN 0
+#define WCM_BUTTON_PIN 34
 #endif
 
 // Forward static wrappers
@@ -122,7 +122,7 @@ static WcmCommitCallbacks sCommitCb;
 
 // Button task
 static void buttonTaskThunk(void* arg) {
-  pinMode(WCM_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(WCM_BUTTON_PIN, INPUT); // External 10K pull-up used (pin 34 doesn't support internal pull-up)
   const TickType_t sample = pdMS_TO_TICKS(10);
   uint32_t pressedMs = 0;
   bool last = digitalRead(WCM_BUTTON_PIN) == LOW;
@@ -131,8 +131,21 @@ static void buttonTaskThunk(void* arg) {
     if (cur) {
       pressedMs += 10;
       if (pressedMs >= 3000) {
-        xEventGroupSetBits(sEvtGroup, EVT_PROV_START);
-        pressedMs = 0; // prevent repeat triggers until next release
+        Serial.println("🔘 Button held for 3s - Erasing credentials and restarting...");
+        
+        // Clear credentials using the manager's method
+        if (sMgr) {
+          sMgr->clearCredentials();
+          Serial.println("✓ Credentials erased");
+        }
+
+        // Disconnect WiFi and restart ESP32 to boot into provisioning mode
+        WiFi.disconnect(true, true);
+        delay(500);
+        Serial.println("🔄 Rebooting to enter provisioning mode...");
+        ESP.restart();
+        
+        pressedMs = 0; // prevent repeat triggers (though we're rebooting anyway)
       }
     } else {
       pressedMs = 0;
@@ -207,6 +220,21 @@ bool WiFiCredentialManager::checkSavedCredentials() {
   if (ers != ESP_OK || erp != ESP_OK) return false;
   if (!validateSSID(ssidBuf) || !validatePASS(passBuf)) return false;
   return true;
+}
+
+void WiFiCredentialManager::clearCredentials() {
+  // Erase from NVS
+  nvs_handle_t h;
+  if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
+    nvs_erase_key(h, kKeySsid);
+    nvs_erase_key(h, kKeyPass);
+    nvs_commit(h);
+    nvs_close(h);
+  }
+  
+  // Clear internal buffers
+  memset(ssidBuf, 0, sizeof(ssidBuf));
+  memset(passBuf, 0, sizeof(passBuf));
 }
 
 void WiFiCredentialManager::startButtonTask() {
@@ -301,6 +329,14 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
               sStatusChar->setValue((uint8_t*)"WIFI_FAIL", 9);
               sStatusChar->notify();
             }
+            
+            // Wait a moment for final notification to be sent
+            vTaskDelay(pdMS_TO_TICKS(500));
+            
+            // Restart ESP32 to boot with new credentials
+            Serial.println("✓ Credentials saved. Restarting...");
+            ESP.restart();
+            
             break;
           } else {
             snprintf(statusBuf, sizeof(statusBuf), "NVS_ERR");
