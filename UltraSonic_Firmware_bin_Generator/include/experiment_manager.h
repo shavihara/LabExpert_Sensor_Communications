@@ -3,6 +3,11 @@
 
 #include <Arduino.h>
 
+// LED pin definitions
+#define STATUS_LED 13
+#define WIFI_LED 14
+#define SENSOR_LED 13
+
 // Experiment constants
 const int MAX_SAMPLES = 1000;
 
