@@ -1,4 +1,4 @@
-// Ultrasonic Sensor Firmware - HC-SR04 Version with Core-Based Processing
+// Oscillation Sensor Firmware - OSI Version with Core-Based Processing
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include "esp_partition.h"
@@ -13,16 +13,16 @@
 #include "../include/config_handler.h"
 #include "../include/experiment_manager.h"
 #include "../include/mqtt_handler.h"
+
 // Include NVS WiFi credentials reader
 #include "nvs_wifi_credentials.h"
 
 // Hardware configuration
-#define STATUS_LED 13
+#define RESTART_TRIGGER_PIN 32
 #define EEPROM_SDA 18
 #define EEPROM_SCL 19
-#define RESTART_TRIGGER_PIN 32
 
-// Network configuration
+// Network configuration - WiFi credentials loaded from NVS at runtime
 char ssid[33];      // Will be loaded from NVS
 char password[65];  // Will be loaded from NVS
 IPAddress gateway(192, 168, 137, 1);
@@ -37,14 +37,17 @@ bool connectWithDynamicIP();
 bool tryStaticIP(int ipSuffix);
 bool connectWithDHCP();
 
-// MQTT configuration
-const char *mqttBroker = "192.168.137.1";
-const uint16_t mqttPort = 1883;
+// MQTT configuration - declared in mqtt_handler.cpp
+extern const char *mqttBroker;
+extern const uint16_t mqttPort;
+
+// Forward declaration
+void cleanFirmwareAndBootOTA();
 
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\n=== Ultrasonic Sensor Firmware - HC-SR04 Version with Core-Based Processing ===");
+    Serial.println("\n=== Oscillation Sensor Firmware - OSI Version with Core-Based Processing ===");
 
     // Initialize I2C bus for EEPROM only
     Wire.begin(EEPROM_SDA, EEPROM_SCL);
@@ -52,16 +55,20 @@ void setup()
     Serial.printf("I2C Bus Initialized:\n");
     Serial.printf("  - EEPROM: SDA=%d, SCL=%d\n", EEPROM_SDA, EEPROM_SCL);
 
-    pinMode(STATUS_LED, OUTPUT);
-    digitalWrite(STATUS_LED, HIGH);
+    // Initialize OSI-specific pins
+    pinMode(SENSOR_LED, OUTPUT);
+    pinMode(WIFI_LED, OUTPUT);
+    pinMode(SENSOR_PIN, INPUT);
+    digitalWrite(SENSOR_LED, LOW);
+    digitalWrite(WIFI_LED, HIGH);
     
     // Configure restart trigger pin with internal pull-up resistor
     pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
 
     delay(300);
+    
     // Load WiFi credentials from NVS
-    if (!loadWiFiCredentialsFromNVS(ssid, sizeof(ssid), password, sizeof(password))) 
-    {
+    if (!loadWiFiCredentialsFromNVS(ssid, sizeof(ssid), password, sizeof(password))) {
         Serial.println("❌ No WiFi credentials found in NVS!");
         Serial.println("Booting back to OTA for credential provisioning...");
         delay(2000);
@@ -69,28 +76,11 @@ void setup()
         return;
     }
 
-    // Initialize Ultrasonic sensor
-    if (initializeUltrasonicSensor())
-    {
-        Serial.println("Ultrasonic Sensor initialization successful");
-    }
-    else
-    {
-        Serial.println("WARNING: Ultrasonic Sensor init issues - check wiring");
-    }
-
-    // Initialize hardware timer for interrupt-driven sampling
-    if (initHardwareTimer())
-    {
-        Serial.println("Hardware timer initialized successfully");
-    }
-    else
-    {
-        Serial.println("ERROR: Hardware timer initialization failed");
-    }
-
-    // Network setup
+    // Network setup with dynamic IP assignment
     WiFi.mode(WIFI_STA);
+    
+    Serial.println("Starting dynamic IP connection...");
+    
     // Try dynamic IP assignment (multiple static IPs, then fallback to DHCP)
     bool wifiConnected = connectWithDynamicIP();
     
@@ -170,12 +160,19 @@ void setup()
         // Initialize MQTT connection
         setupMQTT();
         Serial.printf("MQTT configured for broker at %s:%d\n", mqttBroker, mqttPort);
+        
+        // Blink WiFi LED once to indicate successful connection
+        digitalWrite(WIFI_LED, LOW);
+        delay(100);
+        digitalWrite(WIFI_LED, HIGH);
+        delay(100);
+        digitalWrite(WIFI_LED, LOW);
     }
     else
     {
         Serial.println("\nWiFi connection failed!");
+        digitalWrite(WIFI_LED, HIGH);
     }
-
 
     // Setup HTTP routes
     server.on("/update", HTTP_POST, handleUpdate, handleUpdateUpload);
@@ -191,11 +188,23 @@ void setup()
 
     server.begin();
     Serial.println("HTTP server started");
-    digitalWrite(STATUS_LED, LOW);
 }
 
 void loop()
 {
+    // OSI-specific: Update WiFi LED
+    static unsigned long lastWiFiBlink = 0;
+    if (WiFi.status() != WL_CONNECTED) {
+        digitalWrite(WIFI_LED, HIGH);
+    } else {
+        if (millis() - lastWiFiBlink >= 5000) {
+            digitalWrite(WIFI_LED, HIGH);
+            delay(50);
+            digitalWrite(WIFI_LED, LOW);
+            lastWiFiBlink = millis();
+        }
+    }
+    
     // Check sensor status periodically
     checkSensorStatus();
 
@@ -207,7 +216,7 @@ void loop()
 
     // Manage experiment execution
     manageExperimentLoop();
-
+    
     // Check restart trigger pin
     if (digitalRead(RESTART_TRIGGER_PIN) == LOW) {
         Serial.println("⚠️ Restart trigger pin activated (LOW) - initiating OTA restart...");

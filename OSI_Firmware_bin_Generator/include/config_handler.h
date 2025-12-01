@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ESPAsyncWebServer.h>
 
 // Pin definitions
 #define SENSOR_PIN 4
@@ -28,7 +29,12 @@ struct ExperimentConfig
     String pairedUserID = "";
 };
 
+// HTTP request handlers
+void handleUpdate(AsyncWebServerRequest *request);
+void handleUpdateUpload(AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final);
+
 // Global variables
 extern ExperimentConfig config;
+extern AsyncWebServer server;
 
 #endif
