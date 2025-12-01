@@ -69,6 +69,7 @@ void setup()
 
     pinMode(STATUS_LED, OUTPUT);
     digitalWrite(STATUS_LED, HIGH);
+    pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
 
     delay(300);
 
