@@ -15,16 +15,20 @@
 #include "../include/experiment_manager.h"
 #include "../include/mqtt_handler.h"
 
+// Include NVS WiFi credentials reader
+#include "nvs_wifi_credentials.h"
+
 // Hardware configuration - I2C Pins
-#define STATUS_LED 13
+// STATUS_LED is defined in config_handler.h
+#define RESTART_TRIGGER_PIN 32
 #define EEPROM_SDA 18
 #define EEPROM_SCL 19
 #define TOF_SDA 21
 #define TOF_SCL 22
 
-// Network configuration
-const char *ssid = "Connectify-1.0";
-const char *password = "11111111";
+// Network configuration - WiFi credentials loaded from NVS at runtime
+char ssid[33];      // Will be loaded from NVS
+char password[65];  // Will be loaded from NVS
 IPAddress gateway(192, 168, 137, 1);
 IPAddress subnet(255, 255, 255, 0);
 
@@ -53,6 +57,15 @@ void setup()
     Serial.printf("I2C Buses Initialized:\n");
     Serial.printf("  - EEPROM: SDA=%d, SCL=%d\n", EEPROM_SDA, EEPROM_SCL);
     Serial.printf("  - TOF Sensor: SDA=%d, SCL=%d\n", TOF_SDA, TOF_SCL);
+
+    // Load WiFi credentials from NVS
+    if (!loadWiFiCredentialsFromNVS(ssid, sizeof(ssid), password, sizeof(password))) {
+        Serial.println("❌ No WiFi credentials found in NVS!");
+        Serial.println("Booting back to OTA for credential provisioning...");
+        delay(2000);
+        cleanFirmwareAndBootOTA();
+        return; // cleanFirmwareAndBootOTA will restart, but just in case
+    }
 
     pinMode(STATUS_LED, OUTPUT);
     digitalWrite(STATUS_LED, HIGH);

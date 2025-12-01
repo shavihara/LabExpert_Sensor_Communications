@@ -5,6 +5,8 @@
 #include <ArduinoJson.h>
 #include <ESPAsyncWebServer.h>
 
+#define STATUS_LED 13
+
 // Experiment configuration structure
 struct ExperimentConfig {
     int frequency = 30;           // Hz (default 30Hz, supports 10-50Hz)

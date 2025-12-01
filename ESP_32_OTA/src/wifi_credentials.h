@@ -56,6 +56,23 @@ public:
    */
   void handleBluetoothProvisioning();
 
+  /**
+   * @brief Get the stored SSID
+   * @return const char* pointer to internal SSID buffer
+   */
+  const char* getSSID() { return ssidBuf; }
+
+  /**
+   * @brief Get the stored Password
+   * @return const char* pointer to internal Password buffer
+   */
+  const char* getPassword() { return passBuf; }
+
+  /**
+   * @brief Clear stored WiFi credentials from NVS and internal buffers
+   */
+  void clearCredentials();
+
   private:
   friend void provTaskThunk(void* arg);
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
