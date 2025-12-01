@@ -10,6 +10,7 @@ WiFiCredentialManager wifiMgr;
 #include "esp_partition.h"
 #include "esp_ota_ops.h"
 #include <WiFiUdp.h>
+#include "nvs_mqtt_credentials.h"
 #include <vector>
 // Forward declarations
 static bool hexToBytes(const String &hex, std::vector<uint8_t> &out);
@@ -25,19 +26,13 @@ static String getDeviceIDFromMAC();
 // Wi-Fi credentials - Managed by WiFiCredentialManager
 // const char* ssid = "LabExpert_Hotspot"; // REMOVED
 // const char* password = "password123";     // REMOVED
-IPAddress gateway(192, 168, 137, 1);
-IPAddress subnet(255, 255, 255, 0);
+// Network configuration - All settings obtained from DHCP
 
-// Dynamic IP settings
-const int DYNAMIC_IP_MAX_ATTEMPTS = 10;
-const int DYNAMIC_IP_BASE = 100;
-
-// Web server
-WebServer server(80);
+// Web server configuration
+const int HTTP_PORT = 80;
+WebServer server(HTTP_PORT);
 String deviceID = "LabExpertModule";
-const char *backendHost = "192.168.1.198"; // Backend server IP - Use the IP of your device running the backend
-// const char* backendHost = "192.168.137.1";  Backend server IP - Connect to hotspot interface
-const uint16_t backendPort = 5000;
+// Backend discovery - Uses UDP broadcast discovery (see handleUDPDiscovery)
 
 // OTA state
 bool otaInProgress = false;
@@ -390,20 +385,44 @@ void handleUDPDiscovery()
     int packetSize = udp.parsePacket();
     if (packetSize)
     {
-      char packetBuffer[255];
+      char packetBuffer[512]; // Increased for JSON packets
       int len = udp.read(packetBuffer, sizeof(packetBuffer) - 1);
       if (len > 0)
       {
         packetBuffer[len] = '\0';
 
-        // Check if this is a discovery packet
-        if (strcmp(packetBuffer, UDP_DISCOVERY_MAGIC) == 0)
-        {
+        // Try to parse as JSON first (new format)
+        JsonDocument discoveryDoc;
+        DeserializationError error = deserializeJson(discoveryDoc, packetBuffer);
+        
+        bool isDiscovery = false;
+        
+        if (!error && discoveryDoc["magic"] == "LABEXPERT_DISCOVERY") {
+          // New JSON format with MQTT info
+          isDiscovery = true;
+          
+          const char* mqttBroker = discoveryDoc["mqtt_broker"];
+          uint16_t mqttPort = discoveryDoc["mqtt_port"] | 1883;
+          const char* backendMAC = discoveryDoc["backend_mac"];
+          
+          if (mqttBroker && strlen(mqttBroker) > 0) {
+            // Save MQTT credentials to NVS
+            if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
+              Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
+              if (backendMAC) {
+                Serial.printf("   Backend MAC: %s\n", backendMAC);
+              }
+            }
+          }
+        } else if (strcmp(packetBuffer, UDP_DISCOVERY_MAGIC) == 0) {
+          // Legacy simple string format (backward compatibility)
+          isDiscovery = true;
+        }
+        
+        if (isDiscovery) {
           Serial.println("Received UDP discovery request");
-
           // Get device ID from MAC address (last 5 digits)
           String deviceID = getDeviceIDFromMAC();
-
           // Create response JSON
           JsonDocument doc;
           doc["device_id"] = deviceID;
@@ -412,15 +431,12 @@ void handleUDPDiscovery()
           doc["sensor_type"] = sensorType;
           doc["availability"] = 1; // Always available in OTA mode
           doc["magic"] = UDP_RESPONSE_MAGIC;
-
           String response;
           serializeJson(doc, response);
-
           // Send response back to sender
           udp.beginPacket(udp.remoteIP(), UDP_RESPONSE_PORT);
           udp.write((const uint8_t *)response.c_str(), response.length());
           udp.endPacket();
-
           Serial.printf("Sent UDP discovery response: %s\n", response.c_str());
         }
       }
@@ -428,34 +444,7 @@ void handleUDPDiscovery()
   }
 }
 
-bool tryStaticIP(int ipSuffix, const char* ssid, const char* password)
-{
-  IPAddress local_IP(192, 168, 137, ipSuffix);
-  if (!WiFi.config(local_IP, gateway, subnet))
-  {
-    Serial.printf("❌ Failed to configure static IP 192.168.137.%d\n", ipSuffix);
-    return false;
-  }
-  WiFi.begin(ssid, password);
-  Serial.printf("Connecting with IP 192.168.137.%d", ipSuffix);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20)
-  {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-    yield();
-  }
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    Serial.printf("\n✅ Connected with IP 192.168.137.%d\n", ipSuffix);
-    return true;
-  }
-  Serial.printf("\n❌ Failed to connect with IP 192.168.137.%d\n", ipSuffix);
-  WiFi.disconnect();
-  delay(500);
-  return false;
-}
+
 
 bool connectWithDHCP(const char* ssid, const char* password)
 {
@@ -489,19 +478,7 @@ bool connectWithDynamicIP()
   const char* ssid = wifiMgr.getSSID();
   const char* password = wifiMgr.getPassword();
 
-  Serial.printf("🔧 Starting dynamic IP assignment for SSID: %s\n", ssid);
-  for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++)
-  {
-    int ipSuffix = DYNAMIC_IP_BASE + i;
-    Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
-    if (tryStaticIP(ipSuffix, ssid, password))
-    {
-      Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
-      return true;
-    }
-    delay(1000);
-  }
-  Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
+  Serial.printf("🔧 Connecting to WiFi: %s using DHCP...\n", ssid);
   return connectWithDHCP(ssid, password);
 }
 
