@@ -28,6 +28,7 @@ static BluetoothSerial SerialBT;
 static const char kNamespace[] = "wifi";
 static const char kKeySsid[]   = "ssid";
 static const char kKeyPass[]   = "pass";
+static const char kKeyHostMac[] = "hostmac";
 static const char kDevPrefix[] = "LabExpertOTA";
 static const uint8_t kBleSecret[] = { 'D','E','V','_','S','E','C','R','E','T' };
 
@@ -112,10 +113,22 @@ class WcmCommitCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+class WcmHostMacCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
+    std::string v = c->getValue();
+    size_t n = v.size();
+    if (n > 17) n = 17;
+    memset(sMgr->hostMacBuf, 0, sizeof(sMgr->hostMacBuf));
+    for (size_t i = 0; i < n; ++i) sMgr->hostMacBuf[i] = (char)v[i];
+    Serial.printf("Received HOST MAC: %s\n", sMgr->hostMacBuf);
+  }
+};
+
 static NimBLECharacteristic* sStatusChar = nullptr;
 static WcmSsidCallbacks sSsidCb;
 static WcmPassCallbacks sPassCb;
 static WcmCommitCallbacks sCommitCb;
+static WcmHostMacCallbacks sHostMacCb;
 #endif
 
 // No WiFi event callback; using status polling to reduce API differences
@@ -166,6 +179,7 @@ bool WiFiCredentialManager::begin() {
   sMgr = this;
   memset(ssidBuf, 0, sizeof(ssidBuf));
   memset(passBuf, 0, sizeof(passBuf));
+  memset(hostMacBuf, 0, sizeof(hostMacBuf));
 
   // Init NVS
   esp_err_t err = nvs_flash_init();
@@ -214,8 +228,15 @@ bool WiFiCredentialManager::checkSavedCredentials() {
   }
   size_t ss = sizeof(ssidBuf);
   size_t sp = sizeof(passBuf);
+  size_t sm = sizeof(hostMacBuf);
   esp_err_t ers = nvs_get_str(h, kKeySsid, ssidBuf, &ss);
   esp_err_t erp = nvs_get_str(h, kKeyPass, passBuf, &sp);
+  
+  // Load Host MAC if available (best effort)
+  if (nvs_get_str(h, kKeyHostMac, hostMacBuf, &sm) != ESP_OK) {
+    memset(hostMacBuf, 0, sizeof(hostMacBuf));
+  }
+
   nvs_close(h);
   if (ers != ESP_OK || erp != ESP_OK) return false;
   if (!validateSSID(ssidBuf) || !validatePASS(passBuf)) return false;
@@ -228,6 +249,7 @@ void WiFiCredentialManager::clearCredentials() {
   if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
     nvs_erase_key(h, kKeySsid);
     nvs_erase_key(h, kKeyPass);
+    nvs_erase_key(h, kKeyHostMac);
     nvs_commit(h);
     nvs_close(h);
   }
@@ -235,6 +257,7 @@ void WiFiCredentialManager::clearCredentials() {
   // Clear internal buffers
   memset(ssidBuf, 0, sizeof(ssidBuf));
   memset(passBuf, 0, sizeof(passBuf));
+  memset(hostMacBuf, 0, sizeof(hostMacBuf));
 }
 
 void WiFiCredentialManager::startButtonTask() {
@@ -271,10 +294,12 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   NimBLECharacteristic* passChar = svc->createCharacteristic("0000FFF2-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
   sStatusChar = svc->createCharacteristic("0000FFF3-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   NimBLECharacteristic* commitChar = svc->createCharacteristic("0000FFF4-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
+  NimBLECharacteristic* hostMacChar = svc->createCharacteristic("0000FFF5-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
 
   ssidChar->setCallbacks(&sSsidCb);
   passChar->setCallbacks(&sPassCb);
   commitChar->setCallbacks(&sCommitCb);
+  hostMacChar->setCallbacks(&sHostMacCb);
 
   svc->start();
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
@@ -305,12 +330,16 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
         if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
           esp_err_t ers = nvs_set_str(h, kKeySsid, ssidBuf);
           esp_err_t erp = nvs_set_str(h, kKeyPass, passBuf);
+          if (strnlen(hostMacBuf, sizeof(hostMacBuf)) > 0) {
+            nvs_set_str(h, kKeyHostMac, hostMacBuf);
+          }
           esp_err_t cm = nvs_commit(h);
           nvs_close(h);
           if (ers == ESP_OK && erp == ESP_OK && cm == ESP_OK) {
             snprintf(statusBuf, sizeof(statusBuf), "STORED SSID:%s PASS:%s", ssidBuf, masked);
             sStatusChar->setValue((uint8_t*)statusBuf, strnlen(statusBuf, sizeof(statusBuf)));
             sStatusChar->notify();
+            Serial.printf("Saved Host MAC: %s\n", hostMacBuf);
             xEventGroupSetBits(sEvtGroup, EVT_PROV_DONE);
             commitAttempts++;
             if (WiFi.status() != WL_CONNECTED) {
