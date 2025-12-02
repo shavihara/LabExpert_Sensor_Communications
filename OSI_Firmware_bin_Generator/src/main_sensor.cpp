@@ -16,6 +16,7 @@
 
 // Include NVS WiFi credentials reader
 #include "nvs_wifi_credentials.h"
+#include "../../shared/nvs_mqtt_credentials.h"
 
 // Hardware configuration
 #define RESTART_TRIGGER_PIN 32
@@ -33,6 +34,11 @@ bool connectWithDHCP();
 
 // Forward declaration
 void cleanFirmwareAndBootOTA();
+
+// MQTT configuration - Loaded from NVS (set by OTA bootloader via UDP discovery)
+char mqttBroker[40] = "";
+uint16_t mqttPort = 1883;
+char backendMAC[18] = "";
 
 void setup()
 {
@@ -64,6 +70,22 @@ void setup()
         delay(2000);
         cleanFirmwareAndBootOTA();
         return;
+    }
+
+    // Load MQTT credentials from NVS
+    Serial.println("Loading MQTT credentials from NVS...");
+    if (!loadMQTTCredentialsFromNVS(mqttBroker, sizeof(mqttBroker), &mqttPort, 
+                                     backendMAC, sizeof(backendMAC))) {
+        Serial.println("❌ No MQTT credentials found in NVS");
+        Serial.println("   Rebooting to OTA bootloader for initial setup...");
+        delay(2000);
+        cleanFirmwareAndBootOTA();
+        return;
+    }
+    
+    Serial.printf("✅ MQTT broker loaded: %s:%d\n", mqttBroker, mqttPort);
+    if (strlen(backendMAC) > 0) {
+        Serial.printf("   Backend MAC: %s\n", backendMAC);
     }
 
     // Network setup with dynamic IP assignment

@@ -8,8 +8,8 @@
 
 // MQTT configuration
 extern PubSubClient mqttClient;
-extern const char* mqttBroker;
-extern const uint16_t mqttPort;
+extern char mqttBroker[40];
+extern uint16_t mqttPort;
 
 // MQTT topics
 #define MQTT_DATA_TOPIC "sensors/%s/data"
