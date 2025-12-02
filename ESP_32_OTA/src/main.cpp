@@ -373,6 +373,9 @@ void setupRoutes()
     otaInProgress = false; });
 }
 
+// Global flag to track if MQTT config has been applied in this session
+static bool sMqttConfigured = false;
+
 // ========== UDP Discovery Functions ==========
 void handleUDPDiscovery()
 {
@@ -404,13 +407,37 @@ void handleUDPDiscovery()
           const char* mqttBroker = discoveryDoc["mqtt_broker"];
           uint16_t mqttPort = discoveryDoc["mqtt_port"] | 1883;
           const char* backendMAC = discoveryDoc["backend_mac"];
-          
-          if (mqttBroker && strlen(mqttBroker) > 0) {
-            // Save MQTT credentials to NVS
-            if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
-              Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
-              if (backendMAC) {
-                Serial.printf("   Backend MAC: %s\n", backendMAC);
+            
+            // Inside handleUDPDiscovery()
+            if (mqttBroker && strlen(mqttBroker) > 0) {
+            if (sMqttConfigured) {
+              // Already configured once this session, ignore subsequent packets
+              Serial.println("ℹ️ MQTT Config Ignored: Already configured in this session.");
+            } else {
+              const char* storedHostMac = wifiMgr.getHostMac();
+              bool shouldSave = false;
+              
+              // Verify Backend MAC against stored Host MAC
+              if (storedHostMac && strlen(storedHostMac) > 0) {
+                if (backendMAC && strcasecmp(storedHostMac, backendMAC) == 0) {
+                  Serial.printf("✓ Backend MAC Verified: %s\n", backendMAC);
+                  shouldSave = true;
+                } else {
+                  Serial.printf("❌ MQTT Config Rejected: Backend MAC mismatch!\n");
+                  Serial.printf("   Expected: %s\n", storedHostMac);
+                  Serial.printf("   Received: %s\n", backendMAC ? backendMAC : "(null)");
+                }
+              } else {
+                // No stored Host MAC to verify against - log warning but decide whether to allow
+                Serial.println("⚠️ MQTT Config Ignored: No Host MAC stored in NVS to verify against.");
+              }
+
+              if (shouldSave) {
+                // Save MQTT credentials to NVS
+                if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
+                  Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
+                  sMqttConfigured = true; // Set flag to prevent future writes
+                }
               }
             }
           }
