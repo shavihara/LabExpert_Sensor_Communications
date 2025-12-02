@@ -10,8 +10,8 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 // MQTT configuration (defined in main_sensor.cpp)
-extern const char* mqttBroker;
-extern const uint16_t mqttPort;
+extern char mqttBroker[40];
+extern uint16_t mqttPort;
 
 // MQTT status
 bool mqttConnected = false;

@@ -1,14 +1,15 @@
 #include "mqtt_handler.h"
 #include "sensor_communication.h"
 #include "experiment_manager.h"
+#include "../../shared/nvs_mqtt_credentials.h"
 
 // MQTT client
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 
-// MQTT configuration - DEFINE here instead of extern
-const char *mqttBroker = "192.168.137.1";
-const uint16_t mqttPort = 1883;
+// MQTT configuration - Loaded from NVS by main_sensor.cpp
+extern char mqttBroker[40];
+extern uint16_t mqttPort;
 
 // MQTT status
 bool mqttConnected = false;

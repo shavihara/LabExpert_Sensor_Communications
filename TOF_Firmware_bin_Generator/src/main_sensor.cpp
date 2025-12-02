@@ -36,9 +36,10 @@ char password[65];  // Will be loaded from NVS
 bool connectWithDynamicIP();
 bool connectWithDHCP();
 
-// MQTT configuration
-const char *mqttBroker = "192.168.137.1";
-const uint16_t mqttPort = 1883;
+// MQTT configuration - Loaded from NVS (set by OTA bootloader via UDP discovery)
+char mqttBroker[40] = "";
+uint16_t mqttPort = 1883;
+char backendMAC[18] = "";
 
 void setup()
 {
@@ -60,6 +61,22 @@ void setup()
         delay(2000);
         cleanFirmwareAndBootOTA();
         return; // cleanFirmwareAndBootOTA will restart, but just in case
+    }
+
+    // Load MQTT credentials from NVS
+    Serial.println("Loading MQTT credentials from NVS...");
+    if (!loadMQTTCredentialsFromNVS(mqttBroker, sizeof(mqttBroker), &mqttPort, 
+                                     backendMAC, sizeof(backendMAC))) {
+        Serial.println("❌ No MQTT credentials found in NVS");
+        Serial.println("   Rebooting to OTA bootloader for initial setup...");
+        delay(2000);
+        cleanFirmwareAndBootOTA();
+        return;
+    }
+    
+    Serial.printf("✅ MQTT broker loaded: %s:%d\n", mqttBroker, mqttPort);
+    if (strlen(backendMAC) > 0) {
+        Serial.printf("   Backend MAC: %s\n", backendMAC);
     }
 
     pinMode(STATUS_LED, OUTPUT);
