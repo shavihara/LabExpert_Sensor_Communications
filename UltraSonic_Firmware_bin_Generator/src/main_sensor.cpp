@@ -15,6 +15,7 @@
 #include "../include/mqtt_handler.h"
 // Include NVS WiFi credentials reader
 #include "nvs_wifi_credentials.h"
+#include "../../shared/nvs_mqtt_credentials.h"
 
 // Hardware configuration
 #define STATUS_LED 13
@@ -25,21 +26,16 @@
 // Network configuration
 char ssid[33];      // Will be loaded from NVS
 char password[65];  // Will be loaded from NVS
-IPAddress gateway(192, 168, 137, 1);
-IPAddress subnet(255, 255, 255, 0);
-
-// Dynamic IP configuration
-const int DYNAMIC_IP_BASE = 15;  // Start from .15
-const int DYNAMIC_IP_MAX_ATTEMPTS = 10;  // Try 10 different IPs
+// Network configuration - All settings obtained from DHCP
 
 // Function prototypes
 bool connectWithDynamicIP();
-bool tryStaticIP(int ipSuffix);
 bool connectWithDHCP();
 
-// MQTT configuration
-const char *mqttBroker = "192.168.137.1";
-const uint16_t mqttPort = 1883;
+// MQTT configuration - Loaded from NVS (set by OTA bootloader via UDP discovery)
+char mqttBroker[40] = "";
+uint16_t mqttPort = 1883;
+char backendMAC[18] = "";
 
 void setup()
 {
@@ -67,6 +63,22 @@ void setup()
         delay(2000);
         cleanFirmwareAndBootOTA();
         return;
+    }
+
+    // Load MQTT credentials from NVS
+    Serial.println("Loading MQTT credentials from NVS...");
+    if (!loadMQTTCredentialsFromNVS(mqttBroker, sizeof(mqttBroker), &mqttPort, 
+                                     backendMAC, sizeof(backendMAC))) {
+        Serial.println("❌ No MQTT credentials found in NVS");
+        Serial.println("   Rebooting to OTA bootloader for initial setup...");
+        delay(2000);
+        cleanFirmwareAndBootOTA();
+        return;
+    }
+    
+    Serial.printf("✅ MQTT broker loaded: %s:%d\n", mqttBroker, mqttPort);
+    if (strlen(backendMAC) > 0) {
+        Serial.printf("   Backend MAC: %s\n", backendMAC);
     }
 
     // Initialize Ultrasonic sensor
@@ -283,59 +295,10 @@ void cleanFirmwareAndBootOTA()
 // ================= DYNAMIC IP IMPLEMENTATION =================
 
 bool connectWithDynamicIP() {
-    Serial.println("🔧 Starting dynamic IP assignment...");
-    
-    // First try multiple static IP addresses
-    for (int i = 0; i < DYNAMIC_IP_MAX_ATTEMPTS; i++) {
-        int ipSuffix = DYNAMIC_IP_BASE + i;
-        Serial.printf("Trying static IP: 192.168.137.%d\n", ipSuffix);
-        
-        if (tryStaticIP(ipSuffix)) {
-            Serial.printf("✅ Successfully connected with static IP 192.168.137.%d\n", ipSuffix);
-            return true;
-        }
-        
-        // Wait a bit before trying next IP
-        delay(1000);
-    }
-    
-    Serial.println("❌ All static IP attempts failed, falling back to DHCP...");
-    
-    // If all static IPs failed, try DHCP
+    Serial.println("🔧 Connecting to WiFi using DHCP...");
     return connectWithDHCP();
 }
 
-bool tryStaticIP(int ipSuffix) {
-    IPAddress local_IP(192, 168, 137, ipSuffix);
-    
-    // Configure static IP
-    if (!WiFi.config(local_IP, gateway, subnet)) {
-        Serial.printf("❌ Failed to configure static IP 192.168.137.%d\n", ipSuffix);
-        return false;
-    }
-    
-    // Connect to WiFi
-    WiFi.begin(ssid, password);
-    
-    Serial.printf("Connecting with IP 192.168.137.%d", ipSuffix);
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
-        yield(); // Feed watchdog
-    }
-    
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\n✅ Connected with IP 192.168.137.%d\n", ipSuffix);
-        return true;
-    }
-    
-    Serial.printf("\n❌ Failed to connect with IP 192.168.137.%d\n", ipSuffix);
-    WiFi.disconnect();
-    delay(500);
-    return false;
-}
 
 bool connectWithDHCP() {
     Serial.println("🌐 Trying DHCP connection...");
