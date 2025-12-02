@@ -40,13 +40,13 @@ char backendMAC[18] = "";
 void setup()
 {
     Serial.begin(115200);
-    Serial.println("\\n=== Ultrasonic Sensor Firmware - HC-SR04 Version with Core-Based Processing ===");
+    Serial.println("\n=== Ultrasonic Sensor Firmware - HC-SR04 Version with Core-Based Processing ===");
 
     // Initialize I2C bus for EEPROM only
     Wire.begin(EEPROM_SDA, EEPROM_SCL);
 
-    Serial.printf("I2C Bus Initialized:\\n");
-    Serial.printf("  - EEPROM: SDA=%d, SCL=%d\\n", EEPROM_SDA, EEPROM_SCL);
+    Serial.printf("I2C Bus Initialized:\n");
+    Serial.printf("  - EEPROM: SDA=%d, SCL=%d\n", EEPROM_SDA, EEPROM_SCL);
 
     pinMode(STATUS_LED, OUTPUT);
     digitalWrite(STATUS_LED, HIGH);
@@ -107,7 +107,7 @@ void setup()
     bool wifiConnected = connectWithDynamicIP();
     
     if (wifiConnected) {
-        Serial.printf("\\n✅ WiFi connected successfully. IP: %s\\n", WiFi.localIP().toString().c_str());
+        Serial.printf("\n✅ WiFi connected successfully. IP: %s\n", WiFi.localIP().toString().c_str());
         
         // Detect sensor from EEPROM with failsafe mechanism
         bool sensorDetected = detectSensorFromEEPROM();
@@ -119,7 +119,7 @@ void setup()
 
             // Check current running partition
             const esp_partition_t *running = esp_ota_get_running_partition();
-            Serial.printf("Current running partition: %s\\n", running->label);
+            Serial.printf("Current running partition: %s\n", running->label);
 
             // If running on ota_1, switch back to ota_0 and erase ota_1
             if (running && strcmp(running->label, "ota_1") == 0)
@@ -144,7 +144,7 @@ void setup()
                         }
                         else
                         {
-                            Serial.printf("❌ Failed to erase ota_1 partition: %s\\n", esp_err_to_name(err));
+                            Serial.printf("❌ Failed to erase ota_1 partition: %s\n", esp_err_to_name(err));
                         }
 
                         Serial.println("🔄 Restarting to ESP_32_OTA bootloader...");
@@ -153,7 +153,7 @@ void setup()
                     }
                     else
                     {
-                        Serial.printf("❌ Failed to set boot partition: %s\\n", esp_err_to_name(err));
+                        Serial.printf("❌ Failed to set boot partition: %s\n", esp_err_to_name(err));
                     }
                 }
                 else
@@ -173,19 +173,19 @@ void setup()
         }
 
         sensorWasPresent = sensorDetected;
-        Serial.printf("Detected sensor type: %s\\n", sensorType.c_str());
+        Serial.printf("Detected sensor type: %s\n", sensorType.c_str());
 
         // Get device ID from MAC address
         sensorID = getDeviceIDFromMAC();
-        Serial.printf("Device ID: %s\\n", sensorID.c_str());
+        Serial.printf("Device ID: %s\n", sensorID.c_str());
 
         // Initialize MQTT connection
         setupMQTT();
-        Serial.printf("MQTT configured for broker at %s:%d\\n", mqttBroker, mqttPort);
+        Serial.printf("MQTT configured for broker at %s:%d\n", mqttBroker, mqttPort);
     }
     else
     {
-        Serial.println("\\nWiFi connection failed!");
+        Serial.println("\nWiFi connection failed!");
     }
 
 
@@ -256,7 +256,7 @@ void cleanFirmwareAndBootOTA()
 
     // Get the running partition
     const esp_partition_t *running = esp_ota_get_running_partition();
-    Serial.printf("Current running partition: %s\\n", running->label);
+    Serial.printf("Current running partition: %s\n", running->label);
 
     // Find the OTA boot partition (partition 0)
     const esp_partition_t *ota_partition = esp_partition_find_first(
@@ -264,7 +264,7 @@ void cleanFirmwareAndBootOTA()
 
     if (ota_partition != NULL)
     {
-        Serial.printf("Found OTA partition: %s\\n", ota_partition->label);
+        Serial.printf("Found OTA partition: %s\n", ota_partition->label);
 
         // Set boot partition to OTA 0
         if (esp_ota_set_boot_partition(ota_partition) == ESP_OK)
@@ -316,10 +316,10 @@ bool connectWithDHCP() {
     }
     
     if (WiFi.status() == WL_CONNECTED) {
-        Serial.printf("\\n✅ DHCP connection successful. IP: %s\\n", WiFi.localIP().toString().c_str());
+        Serial.printf("\n✅ DHCP connection successful. IP: %s\n", WiFi.localIP().toString().c_str());
         return true;
     }
     
-    Serial.println("\\n❌ DHCP connection failed");
+    Serial.println("\n❌ DHCP connection failed");
     return false;
 }
