@@ -455,7 +455,7 @@ void handleUDPDiscovery()
               }
             }
           }
-        } else if (strcmp(packetBuffer, UDP_DISCOVERY_MAGIC) == 0) {
+        }else if (strcmp(packetBuffer, UDP_DISCOVERY_MAGIC) == 0) {
           // Legacy simple string format (backward compatibility)
           isDiscovery = true;
         }
