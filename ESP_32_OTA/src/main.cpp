@@ -407,6 +407,7 @@ void handleUDPDiscovery()
           // 1. Get Backend MAC from JSON (for security verification)
           const char* backendMAC = discoveryDoc["backend_mac"];
 
+
           
           // 2. Get Broker IP from UDP Packet Source (Dynamic & Robust)
           // We ignore any IP in the JSON and trust the network layer.
@@ -415,6 +416,7 @@ void handleUDPDiscovery()
           
           // Default port since we removed it from JSON
           uint16_t mqttPort = 1883; 
+
 
             
             // Inside handleUDPDiscovery()
@@ -444,6 +446,7 @@ void handleUDPDiscovery()
               if (shouldSave) {
                 // Save MQTT credentials to NVS
                 // Note: We are saving the UDP Source IP as the broker
+
 
                 if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
                   Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
