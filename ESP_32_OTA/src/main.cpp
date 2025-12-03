@@ -401,11 +401,10 @@ void handleUDPDiscovery()
         bool isDiscovery = false;
         
         if (!error && discoveryDoc["magic"] == "LABEXPERT_DISCOVERY") {
-          // New JSON format with MQTT info
+          // New JSON format
           isDiscovery = true;
           
-          const char* mqttBroker = discoveryDoc["mqtt_broker"];
-          uint16_t mqttPort = discoveryDoc["mqtt_port"] | 1883;
+          // 1. Get Backend MAC from JSON (for security verification)
           const char* backendMAC = discoveryDoc["backend_mac"];
             
             // Inside handleUDPDiscovery()
@@ -458,6 +457,13 @@ void handleUDPDiscovery()
           doc["sensor_type"] = sensorType;
           doc["availability"] = 1; // Always available in OTA mode
           doc["magic"] = UDP_RESPONSE_MAGIC;
+          
+          // Add stored backend MAC for bidirectional verification
+          const char* storedHostMac = wifiMgr.getHostMac();
+          if (storedHostMac && strlen(storedHostMac) > 0) {
+            doc["backend_mac"] = storedHostMac;
+          }
+          
           String response;
           serializeJson(doc, response);
           // Send response back to sender

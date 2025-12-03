@@ -51,45 +51,92 @@ bool saveMQTTCredentialsToNVS(const char* broker, uint16_t port, const char* bac
         return false;
     }
 
-    // Save broker IP
-    err = nvs_set_str(handle, "broker", broker);
-    if (err != ESP_OK) {
-        nvs_close(handle);
-        Serial.println("❌ Failed to save MQTT broker to NVS");
-        return false;
+    bool needCommit = false;
+
+    // 1. Check Broker IP
+    size_t required_size;
+    bool brokerChanged = true;
+    if (nvs_get_str(handle, "broker", NULL, &required_size) == ESP_OK) {
+        char* storedBroker = (char*)malloc(required_size);
+        if (storedBroker) {
+            nvs_get_str(handle, "broker", storedBroker, &required_size);
+            if (strcmp(storedBroker, broker) == 0) {
+                brokerChanged = false;
+            }
+            free(storedBroker);
+        }
     }
 
-    // Save port
-    err = nvs_set_u16(handle, "port", port);
-    if (err != ESP_OK) {
-        nvs_close(handle);
-        Serial.println("❌ Failed to save MQTT port to NVS");
-        return false;
-    }
-
-    // Save backend MAC address (optional)
-    if (backendMAC && strlen(backendMAC) > 0) {
-        err = nvs_set_str(handle, "backend_mac", backendMAC);
-        // Don't fail if MAC save fails (it's optional for future use)
+    if (brokerChanged) {
+        err = nvs_set_str(handle, "broker", broker);
         if (err != ESP_OK) {
-            Serial.println("⚠️ Warning: Failed to save backend MAC to NVS");
+            nvs_close(handle);
+            Serial.println("❌ Failed to save MQTT broker to NVS");
+            return false;
+        }
+        needCommit = true;
+    }
+
+    // 2. Check Port
+    uint16_t storedPort = 0;
+    bool portChanged = true;
+    if (nvs_get_u16(handle, "port", &storedPort) == ESP_OK) {
+        if (storedPort == port) {
+            portChanged = false;
         }
     }
 
-    // Commit changes
-    err = nvs_commit(handle);
+    if (portChanged) {
+        err = nvs_set_u16(handle, "port", port);
+        if (err != ESP_OK) {
+            nvs_close(handle);
+            Serial.println("❌ Failed to save MQTT port to NVS");
+            return false;
+        }
+        needCommit = true;
+    }
+
+    // 3. Check Backend MAC (optional)
+    if (backendMAC && strlen(backendMAC) > 0) {
+        bool macChanged = true;
+        if (nvs_get_str(handle, "backend_mac", NULL, &required_size) == ESP_OK) {
+            char* storedMac = (char*)malloc(required_size);
+            if (storedMac) {
+                nvs_get_str(handle, "backend_mac", storedMac, &required_size);
+                if (strcasecmp(storedMac, backendMAC) == 0) {
+                    macChanged = false;
+                }
+                free(storedMac);
+            }
+        }
+
+        if (macChanged) {
+            err = nvs_set_str(handle, "backend_mac", backendMAC);
+            if (err != ESP_OK) {
+                Serial.println("⚠️ Warning: Failed to save backend MAC to NVS");
+            } else {
+                needCommit = true;
+            }
+        }
+    }
+
+    if (needCommit) {
+        err = nvs_commit(handle);
+        if (err == ESP_OK) {
+            Serial.printf("✅ MQTT credentials updated in NVS: %s:%d\n", broker, port);
+            if (backendMAC && strlen(backendMAC) > 0) {
+                Serial.printf("   Backend MAC: %s\n", backendMAC);
+            }
+        } else {
+            Serial.println("❌ Failed to commit MQTT credentials to NVS");
+        }
+    } else {
+        Serial.println("ℹ️ MQTT credentials unchanged. Skipping NVS write.");
+        err = ESP_OK; // Treat as success
+    }
+
     nvs_close(handle);
-
-    if (err == ESP_OK) {
-        Serial.printf("✅ MQTT credentials saved to NVS: %s:%d\n", broker, port);
-        if (backendMAC && strlen(backendMAC) > 0) {
-            Serial.printf("   Backend MAC: %s\n", backendMAC);
-        }
-        return true;
-    }
-    
-    Serial.println("❌ Failed to commit MQTT credentials to NVS");
-    return false;
+    return (err == ESP_OK);
 }
 
 /**
