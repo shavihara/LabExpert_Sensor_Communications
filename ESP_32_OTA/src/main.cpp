@@ -401,12 +401,19 @@ void handleUDPDiscovery()
         bool isDiscovery = false;
         
         if (!error && discoveryDoc["magic"] == "LABEXPERT_DISCOVERY") {
-          // New JSON format with MQTT info
+          // New JSON format
           isDiscovery = true;
           
-          const char* mqttBroker = discoveryDoc["mqtt_broker"];
-          uint16_t mqttPort = discoveryDoc["mqtt_port"] | 1883;
+          // 1. Get Backend MAC from JSON (for security verification)
           const char* backendMAC = discoveryDoc["backend_mac"];
+          
+          // 2. Get Broker IP from UDP Packet Source (Dynamic & Robust)
+          // We ignore any IP in the JSON and trust the network layer.
+          String remoteIPStr = udp.remoteIP().toString();
+          const char* mqttBroker = remoteIPStr.c_str();
+          
+          // Default port since we removed it from JSON
+          uint16_t mqttPort = 1883; 
             
             // Inside handleUDPDiscovery()
             if (mqttBroker && strlen(mqttBroker) > 0) {
@@ -431,9 +438,9 @@ void handleUDPDiscovery()
                 // No stored Host MAC to verify against - log warning but decide whether to allow
                 Serial.println("⚠️ MQTT Config Ignored: No Host MAC stored in NVS to verify against.");
               }
-
               if (shouldSave) {
                 // Save MQTT credentials to NVS
+                // Note: We are saving the UDP Source IP as the broker
                 if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
                   Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
                   sMqttConfigured = true; // Set flag to prevent future writes
@@ -458,6 +465,13 @@ void handleUDPDiscovery()
           doc["sensor_type"] = sensorType;
           doc["availability"] = 1; // Always available in OTA mode
           doc["magic"] = UDP_RESPONSE_MAGIC;
+          
+          // Add stored backend MAC for bidirectional verification
+          const char* storedHostMac = wifiMgr.getHostMac();
+          if (storedHostMac && strlen(storedHostMac) > 0) {
+            doc["backend_mac"] = storedHostMac;
+          }
+          
           String response;
           serializeJson(doc, response);
           // Send response back to sender
