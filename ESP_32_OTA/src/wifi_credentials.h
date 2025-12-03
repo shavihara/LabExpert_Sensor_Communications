@@ -67,6 +67,7 @@ public:
    * @return const char* pointer to internal Password buffer
    */
   const char* getPassword() { return passBuf; }
+  const char* getHostMac() { return hostMacBuf; }
 
   /**
    * @brief Clear stored WiFi credentials from NVS and internal buffers
@@ -78,11 +79,13 @@ public:
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
   friend class WcmSsidCallbacks;
   friend class WcmPassCallbacks;
+  friend class WcmHostMacCallbacks;
 #endif
 
   // Internal fixed buffers (null-terminated)
   char ssidBuf[33];
   char passBuf[65];
+  char hostMacBuf[18];
 
   // Internal state
   void startButtonTask();
