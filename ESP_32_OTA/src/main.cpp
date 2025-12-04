@@ -523,11 +523,8 @@ bool connectWithDynamicIP()
     return false;
   }
 
-  const char* ssid = wifiMgr.getSSID();
-  const char* password = wifiMgr.getPassword();
-
-  Serial.printf("🔧 Connecting to WiFi: %s using DHCP...\n", ssid);
-  return connectWithDHCP(ssid, password);
+  Serial.printf("🔧 Connecting to WiFi (saved credentials) using DHCP...\n");
+  return wifiMgr.connectWiFi();
 }
 
 // ========== Setup ==========

@@ -3,6 +3,7 @@
 #include <esp_system.h>
 #include <esp_event.h>
 #include <esp_wifi.h>
+#include "esp_wpa2.h"
 #include <nvs_flash.h>
 #include <nvs.h>
 
@@ -28,6 +29,7 @@ static BluetoothSerial SerialBT;
 static const char kNamespace[] = "wifi";
 static const char kKeySsid[]   = "ssid";
 static const char kKeyPass[]   = "pass";
+static const char kKeyUser[]   = "user";
 static const char kKeyHostMac[] = "hostmac";
 static const char kDevPrefix[] = "LabExpertOTA";
 static const uint8_t kBleSecret[] = { 'D','E','V','_','S','E','C','R','E','T' };
@@ -124,9 +126,20 @@ class WcmHostMacCallbacks : public NimBLECharacteristicCallbacks {
   }
 };
 
+class WcmUserCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* c) override {
+    std::string v = c->getValue();
+    size_t n = v.size();
+    if (n > 64) n = 64;
+    memset(sMgr->userBuf, 0, sizeof(sMgr->userBuf));
+    for (size_t i = 0; i < n; ++i) sMgr->userBuf[i] = (char)v[i];
+  }
+};
+
 static NimBLECharacteristic* sStatusChar = nullptr;
 static WcmSsidCallbacks sSsidCb;
 static WcmPassCallbacks sPassCb;
+static WcmUserCallbacks sUserCb;
 static WcmCommitCallbacks sCommitCb;
 static WcmHostMacCallbacks sHostMacCb;
 #endif
@@ -179,6 +192,7 @@ bool WiFiCredentialManager::begin() {
   sMgr = this;
   memset(ssidBuf, 0, sizeof(ssidBuf));
   memset(passBuf, 0, sizeof(passBuf));
+  memset(userBuf, 0, sizeof(userBuf));
   memset(hostMacBuf, 0, sizeof(hostMacBuf));
 
   // Init NVS
@@ -208,9 +222,16 @@ bool WiFiCredentialManager::connectWiFi() {
   if (!checkSavedCredentials()) return false;
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssidBuf, passBuf);
+  if (strnlen(userBuf, sizeof(userBuf)) > 0) {
+    esp_wifi_sta_wpa2_ent_set_identity((uint8_t*)userBuf, strlen(userBuf));
+    esp_wifi_sta_wpa2_ent_set_username((uint8_t*)userBuf, strlen(userBuf));
+    esp_wifi_sta_wpa2_ent_set_password((uint8_t*)passBuf, strlen(passBuf));
+    esp_wifi_sta_wpa2_ent_enable();
+    WiFi.begin(ssidBuf);
+  } else {
+    WiFi.begin(ssidBuf, passBuf);
+  }
 
-  // Poll status to ensure compatibility across Arduino core versions
   TickType_t start = xTaskGetTickCount();
   while ((xTaskGetTickCount() - start) < pdMS_TO_TICKS(15000)) {
     if (WiFi.status() == WL_CONNECTED) {
@@ -228,9 +249,11 @@ bool WiFiCredentialManager::checkSavedCredentials() {
   }
   size_t ss = sizeof(ssidBuf);
   size_t sp = sizeof(passBuf);
+  size_t su = sizeof(userBuf);
   size_t sm = sizeof(hostMacBuf);
   esp_err_t ers = nvs_get_str(h, kKeySsid, ssidBuf, &ss);
   esp_err_t erp = nvs_get_str(h, kKeyPass, passBuf, &sp);
+  esp_err_t eru = nvs_get_str(h, kKeyUser, userBuf, &su);
   
   // Load Host MAC if available (best effort)
   if (nvs_get_str(h, kKeyHostMac, hostMacBuf, &sm) != ESP_OK) {
@@ -238,8 +261,13 @@ bool WiFiCredentialManager::checkSavedCredentials() {
   }
 
   nvs_close(h);
-  if (ers != ESP_OK || erp != ESP_OK) return false;
-  if (!validateSSID(ssidBuf) || !validatePASS(passBuf)) return false;
+  if (ers != ESP_OK) return false;
+  if (!validateSSID(ssidBuf)) return false;
+  if (eru == ESP_OK && strnlen(userBuf, sizeof(userBuf)) > 0) {
+    return strnlen(passBuf, sizeof(passBuf)) > 0;
+  }
+  if (erp != ESP_OK) return false;
+  if (!validatePASS(passBuf)) return false;
   return true;
 }
 
@@ -249,6 +277,7 @@ void WiFiCredentialManager::clearCredentials() {
   if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
     nvs_erase_key(h, kKeySsid);
     nvs_erase_key(h, kKeyPass);
+    nvs_erase_key(h, kKeyUser);
     nvs_erase_key(h, kKeyHostMac);
     nvs_commit(h);
     nvs_close(h);
@@ -257,6 +286,7 @@ void WiFiCredentialManager::clearCredentials() {
   // Clear internal buffers
   memset(ssidBuf, 0, sizeof(ssidBuf));
   memset(passBuf, 0, sizeof(passBuf));
+  memset(userBuf, 0, sizeof(userBuf));
   memset(hostMacBuf, 0, sizeof(hostMacBuf));
 }
 
@@ -279,9 +309,10 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   esp_read_mac(mac, ESP_MAC_BT);
 #endif
   char devName[24];
-  snprintf(devName, sizeof(devName), "%s", kDevPrefix);
-  size_t len = strnlen(devName, sizeof(devName));
-  snprintf(devName + len, sizeof(devName) - len, "%02X%02X%02X%02X%02X", mac[1], mac[2], mac[3], mac[4], mac[5]);
+  char macHex[13];
+  snprintf(macHex, sizeof(macHex), "%02X%02X%02X%02X%02X%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  const char* suffix = macHex + 7; // last 5 hex digits
+  snprintf(devName, sizeof(devName), "%s-%s", kDevPrefix, suffix);
 
   TickType_t startTick = xTaskGetTickCount();
 
@@ -295,9 +326,11 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
   sStatusChar = svc->createCharacteristic("0000FFF3-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
   NimBLECharacteristic* commitChar = svc->createCharacteristic("0000FFF4-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
   NimBLECharacteristic* hostMacChar = svc->createCharacteristic("0000FFF5-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
+  NimBLECharacteristic* userChar = svc->createCharacteristic("0000FFF6-0000-1000-8000-00805F9B34FB", NIMBLE_PROPERTY::WRITE);
 
   ssidChar->setCallbacks(&sSsidCb);
   passChar->setCallbacks(&sPassCb);
+  userChar->setCallbacks(&sUserCb);
   commitChar->setCallbacks(&sCommitCb);
   hostMacChar->setCallbacks(&sHostMacCb);
 
@@ -330,6 +363,9 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
         if (nvs_open(kNamespace, NVS_READWRITE, &h) == ESP_OK) {
           esp_err_t ers = nvs_set_str(h, kKeySsid, ssidBuf);
           esp_err_t erp = nvs_set_str(h, kKeyPass, passBuf);
+          if (strnlen(userBuf, sizeof(userBuf)) > 0) {
+            nvs_set_str(h, kKeyUser, userBuf);
+          }
           if (strnlen(hostMacBuf, sizeof(hostMacBuf)) > 0) {
             nvs_set_str(h, kKeyHostMac, hostMacBuf);
           }
@@ -344,7 +380,15 @@ void WiFiCredentialManager::handleBluetoothProvisioning() {
             commitAttempts++;
             if (WiFi.status() != WL_CONNECTED) {
               WiFi.mode(WIFI_STA);
-              WiFi.begin(ssidBuf, passBuf);
+              if (strnlen(userBuf, sizeof(userBuf)) > 0) {
+                esp_wifi_sta_wpa2_ent_set_identity((uint8_t*)userBuf, strlen(userBuf));
+                esp_wifi_sta_wpa2_ent_set_username((uint8_t*)userBuf, strlen(userBuf));
+                esp_wifi_sta_wpa2_ent_set_password((uint8_t*)passBuf, strlen(passBuf));
+                esp_wifi_sta_wpa2_ent_enable();
+                WiFi.begin(ssidBuf);
+              } else {
+                WiFi.begin(ssidBuf, passBuf);
+              }
               TickType_t st = xTaskGetTickCount();
               while ((xTaskGetTickCount()-st) < pdMS_TO_TICKS(15000)) {
                 if (WiFi.status()==WL_CONNECTED) break;
