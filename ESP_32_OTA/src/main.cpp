@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include "wifi_credentials.h"
-
 WiFiCredentialManager wifiMgr;
 #include <WebServer.h>
 #include <Update.h>
