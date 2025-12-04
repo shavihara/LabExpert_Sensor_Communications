@@ -2,7 +2,7 @@
 
 
 //SCL(IC PIN 6) = A5
-//SDL (IC PIN 5) = A4
+//SDA (IC PIN 5) = A4
 // IC PIN 8 = 5v
 // IC PIN 1,2,3,4,7 = GND
 
