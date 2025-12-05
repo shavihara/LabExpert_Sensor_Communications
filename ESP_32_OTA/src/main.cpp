@@ -329,6 +329,8 @@ void setupRoutes()
     String json;
     serializeJson(resp, json);
     server.send(ok ? 200 : 500, "application/json", json);
+    delay(1000);
+    ESP.restart();
   });
 
   server.on("/id", HTTP_GET, []()
