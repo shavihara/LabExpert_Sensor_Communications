@@ -123,6 +123,7 @@ bool detectSensor()
           if (eepromData != "")
           {
             sensorType = eepromData;
+            lastSensorTypeReported = sensorType;
           }
           else
           {
@@ -276,7 +277,12 @@ void setupRoutes()
   server.on("/info", HTTP_GET, []()
             {
     JsonDocument doc;  // NEW
-    doc["sensor_type"] = sensorType;
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["sensor_type"] = reportedType;
+    }
     doc["sensor_id"] = sensorID;
     String jsonResp;
     serializeJson(doc, jsonResp);
@@ -328,7 +334,12 @@ void setupRoutes()
   server.on("/id", HTTP_GET, []()
             {
     JsonDocument doc;
-    doc["id"] = sensorType; // Use sensorType as ID for firmware selection
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["id"] = reportedType;
+    }
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json); });
