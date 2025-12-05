@@ -43,7 +43,7 @@
  * @return true if successfully saved
  * @return false if save failed
  */
-bool saveMQTTCredentialsToNVS(const char* broker, uint16_t port, const char* backendMAC = nullptr) {
+inline bool saveMQTTCredentialsToNVS(const char* broker, uint16_t port, const char* backendMAC = nullptr) {
     nvs_handle_t handle;
     esp_err_t err = nvs_open("mqtt", NVS_READWRITE, &handle);
     if (err != ESP_OK) {
@@ -150,7 +150,7 @@ bool saveMQTTCredentialsToNVS(const char* broker, uint16_t port, const char* bac
  * @return true if successfully loaded
  * @return false if credentials not found or invalid
  */
-bool loadMQTTCredentialsFromNVS(char* brokerBuf, size_t brokerSize, uint16_t* port, 
+inline bool loadMQTTCredentialsFromNVS(char* brokerBuf, size_t brokerSize, uint16_t* port, 
                                  char* macBuf = nullptr, size_t macSize = 0) {
     // Initialize NVS if needed
     esp_err_t err = nvs_flash_init();
@@ -211,7 +211,7 @@ bool loadMQTTCredentialsFromNVS(char* brokerBuf, size_t brokerSize, uint16_t* po
  * @return true if credentials exist
  * @return false if credentials not found
  */
-bool hasMQTTCredentialsInNVS() {
+inline bool hasMQTTCredentialsInNVS() {
     char broker[40];
     uint16_t port;
     return loadMQTTCredentialsFromNVS(broker, sizeof(broker), &port);

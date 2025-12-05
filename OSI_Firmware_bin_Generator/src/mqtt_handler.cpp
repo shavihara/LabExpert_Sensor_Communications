@@ -93,30 +93,32 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     // Handle command messages
     const char *command = doc["command"];
 
-    if (strcmp(command, "start_oscillation") == 0)
+    if (strcmp(command, "start_experiment") == 0)
     {
         int count = doc["count"] | 20;
 
         if (!experimentRunning)
         {
-            experimentRunning = true;
-            experimentStartTime = millis();
-            targetOscillationCount = count;
-            currentOscillationCount = 0;
-            dataIndex = 0;
-            waitingForHigh = true;
-            lastSensorState = digitalRead(SENSOR_PIN);
-
-            Serial.printf("Experiment started via MQTT - Target: %d oscillations\n", count);
+            startExperiment(count);
+            // experimentStartTime is set inside startExperiment
             publishStatus("experiment_started");
         }
     }
-    else if (strcmp(command, "stop_oscillation") == 0)
+    else if (strcmp(command, "stop_experiment") == 0)
     {
-        experimentRunning = false;
-        dataReady = true;
-        Serial.println("Experiment stopped via MQTT");
+        stopExperiment();
         publishStatus("experiment_stopped");
+    }
+    else if (strcmp(command, "disconnect_device") == 0)
+    {
+        Serial.println("Disconnect command received - cleaning firmware and booting to OTA");
+        publishStatus("disconnecting", "Device disconnecting and booting to OTA");
+        
+        // Clean up and prepare for OTA boot
+        delay(1000); // Give time for status message to be sent
+        
+        // Clean firmware partition and boot to OTA
+        cleanFirmwareAndBootOTA();
     }
     else if (strcmp(command, "status") == 0)
     {

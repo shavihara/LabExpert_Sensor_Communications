@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include "wifi_credentials.h"
-
 WiFiCredentialManager wifiMgr;
 #include <WebServer.h>
 #include <Update.h>
@@ -22,6 +21,7 @@ static String getDeviceIDFromMAC();
 // EEPROM config
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
+#define EEPROM_WP_PIN 23
 
 // Wi-Fi credentials - Managed by WiFiCredentialManager
 // const char* ssid = "LabExpert_Hotspot"; // REMOVED
@@ -50,6 +50,7 @@ String sensorID = "N/A";
 unsigned long previousWifiLedMillis = 0;
 unsigned long previousSensorLedMillis = 0;
 const unsigned long ledInterval = 3000;
+const unsigned long ledPulseDuration = 20;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
@@ -122,11 +123,13 @@ bool detectSensor()
           if (eepromData != "")
           {
             sensorType = eepromData;
+            lastSensorTypeReported = sensorType;
           }
           else
           {
             sensorType = "UNKNOWN";
             Serial.printf("⚠️ WARNNING!(Sensor Type: %s, ID: %s unable to recognize!)\n", sensorType.c_str(), sensorID.c_str());
+            digitalWrite(EEPROM_WP_PIN, LOW);
           }
           Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
           return (sensorType != "UNKNOWN");
@@ -178,12 +181,16 @@ void handleWifiLed()
   }
   else if (WiFi.status() == WL_CONNECTED)
   {
-    // Slow blink when WiFi connected (3000ms interval)
-    if (now - previousWifiLedMillis >= ledInterval)
+    // Pulse blink when WiFi connected (150ms ON every 3000ms)
+    unsigned long diff = now - previousWifiLedMillis;
+    if (diff >= ledInterval)
     {
       previousWifiLedMillis = now;
-      wifiLedState = !wifiLedState;
-      digitalWrite(WIFI_LED, wifiLedState ? LOW : HIGH);
+      digitalWrite(WIFI_LED, HIGH); // ON (Active Low)
+    }
+    else if (diff >= ledPulseDuration)
+    {
+      digitalWrite(WIFI_LED, LOW); // OFF
     }
   }
   else
@@ -198,27 +205,18 @@ void handleSensorLed()
 {
   unsigned long now = millis();
   
-  // Check if in Bluetooth provisioning mode
-  bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
-  
-  if (bluetoothMode)
+if (sensorType != "UNKNOWN")
   {
-    // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousSensorLedMillis >= 500)
+    // Pulse blink when sensor detected (150ms ON every 3000ms)
+    unsigned long diff = now - previousSensorLedMillis;
+    if (diff >= ledInterval)
     {
       previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+      digitalWrite(SENSOR_LED, HIGH); // ON (Active Low)
     }
-  }
-  else if (sensorType != "UNKNOWN")
-  {
-    // Slow blink when sensor detected (3000ms interval)
-    if (now - previousSensorLedMillis >= ledInterval)
+    else if (diff >= ledPulseDuration)
     {
-      previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+      digitalWrite(SENSOR_LED, LOW); // OFF
     }
   }
   else
@@ -234,7 +232,7 @@ void setupRoutes()
   server.on("/", HTTP_GET, []()
             {
     String html =
-      "<h1>ESP32 OTA Manager</h1>"
+      "<h1>LabExpert Module OTA Manager</h1>"
       "<p>Sensor: " + sensorType + " (ID: " + sensorID + ")</p>"
       "<form method='POST' action='/update' enctype='multipart/form-data'>"
       "<input type='file' name='update'>"
@@ -279,7 +277,12 @@ void setupRoutes()
   server.on("/info", HTTP_GET, []()
             {
     JsonDocument doc;  // NEW
-    doc["sensor_type"] = sensorType;
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["sensor_type"] = reportedType;
+    }
     doc["sensor_id"] = sensorID;
     String jsonResp;
     serializeJson(doc, jsonResp);
@@ -289,10 +292,56 @@ void setupRoutes()
   server.on("/ping", HTTP_GET, []()
             { server.send(200, "text/plain", "pong"); });
 
+  // Repair sensor EEPROM route
+  server.on("/sensor/repair", HTTP_POST, []()
+            {
+    String body = server.arg("plain");
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"bad_json\"}");
+      return;
+    }
+    String id = (const char*)(doc["id"] | "");
+    id.trim();
+    if (id.length() != 3) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"invalid_id\"}");
+      return;
+    }
+    // Allow write: pull WP low
+    digitalWrite(EEPROM_WP_PIN, LOW);
+    delay(5);
+    // Write 3 chars to 24C02 starting at 0x00
+    Wire.beginTransmission(EEPROM_SENSOR_ADDR);
+    Wire.write((uint8_t)0x00);
+    Wire.write((uint8_t)id[0]);
+    Wire.write((uint8_t)id[1]);
+    Wire.write((uint8_t)id[2]);
+    Wire.endTransmission();
+    delay(10);
+    // Set WP high again
+    digitalWrite(EEPROM_WP_PIN, HIGH);
+    // Re-read sensor
+    bool ok = detectSensor();
+    JsonDocument resp;
+    resp["success"] = ok;
+    resp["sensor_type"] = sensorType;
+    String json;
+    serializeJson(resp, json);
+    server.send(ok ? 200 : 500, "application/json", json);
+    delay(1000);
+    ESP.restart();
+  });
+
   server.on("/id", HTTP_GET, []()
             {
     JsonDocument doc;
-    doc["id"] = sensorType; // Use sensorType as ID for firmware selection
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["id"] = reportedType;
+    }
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json); });
@@ -523,11 +572,8 @@ bool connectWithDynamicIP()
     return false;
   }
 
-  const char* ssid = wifiMgr.getSSID();
-  const char* password = wifiMgr.getPassword();
-
-  Serial.printf("🔧 Connecting to WiFi: %s using DHCP...\n", ssid);
-  return connectWithDHCP(ssid, password);
+  Serial.printf("🔧 Connecting to WiFi (saved credentials) using DHCP...\n");
+  return wifiMgr.connectWiFi();
 }
 
 // ========== Setup ==========
@@ -558,30 +604,16 @@ void setup()
 
   pinMode(WIFI_LED, OUTPUT);
   pinMode(SENSOR_LED, OUTPUT);
+  pinMode(EEPROM_WP_PIN, OUTPUT);
   digitalWrite(WIFI_LED, HIGH);
   digitalWrite(SENSOR_LED, HIGH);
+  digitalWrite(EEPROM_WP_PIN, HIGH);
 
   Wire.begin(18, 19); // SDA, SCL
 
   if (!detectSensor())
   {
-    Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-    for (int i = 0; i < 3; i++)
-    {
-      delay(5000); // Wait 5 seconds per attempt
-      if (detectSensor())
-      {
-        Serial.println("✓ Sensor reconnected.");
-        break;
-      }
-      Serial.printf("✘ Reconnection attempt %d/3 failed.\n", i + 1);
-    }
-    if (sensorType == "UNKNOWN")
-    {
-      Serial.println("✘ Giving up. Rebooting...");
-      delay(2000);
-      esp_restart();
-    }
+    Serial.println("✘ Sensor not detected. Continuing in bootloader mode; network services will remain active.");
   }
 
   // Check if we should run in bootloader mode (custom partition 0)
@@ -708,14 +740,9 @@ void loop()
     if (sensorType != prev)
     {
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
-
-      if (sensorType == "UNKNOWN")
+      if (!detectSensor())
       {
-        Serial.println("Sensor unplug detected; erasing inactive OTA partition and rebooting to bootloader mode");
-        eraseInactivePartition();
-        // Force reboot to ensure we're in bootloader mode when sensor is unplugged
-        delay(1000);
-        ESP.restart();
+        Serial.println("✘ Sensor not detected. Keeping network services active, waiting for reconnection...");
       }
     }
   }

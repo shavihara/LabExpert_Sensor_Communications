@@ -67,6 +67,7 @@ public:
    * @return const char* pointer to internal Password buffer
    */
   const char* getPassword() { return passBuf; }
+  const char* getUser() { return userBuf; }
   const char* getHostMac() { return hostMacBuf; }
 
   /**
@@ -79,12 +80,14 @@ public:
 #if defined(WCM_USE_NIMBLE) && WCM_USE_NIMBLE
   friend class WcmSsidCallbacks;
   friend class WcmPassCallbacks;
+  friend class WcmUserCallbacks;
   friend class WcmHostMacCallbacks;
 #endif
 
   // Internal fixed buffers (null-terminated)
   char ssidBuf[33];
   char passBuf[65];
+  char userBuf[65];
   char hostMacBuf[18];
 
   // Internal state
