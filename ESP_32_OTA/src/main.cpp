@@ -50,6 +50,7 @@ String sensorID = "N/A";
 unsigned long previousWifiLedMillis = 0;
 unsigned long previousSensorLedMillis = 0;
 const unsigned long ledInterval = 3000;
+const unsigned long ledPulseDuration = 20;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
@@ -170,7 +171,7 @@ void handleWifiLed()
   if (bluetoothMode)
   {
     // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousWifiLedMillis >= 500)
+    if (now - previousWifiLedMillis >= 100)
     {
       previousWifiLedMillis = now;
       wifiLedState = !wifiLedState;
@@ -179,12 +180,16 @@ void handleWifiLed()
   }
   else if (WiFi.status() == WL_CONNECTED)
   {
-    // Slow blink when WiFi connected (3000ms interval)
-    if (now - previousWifiLedMillis >= ledInterval)
+    // Pulse blink when WiFi connected (150ms ON every 3000ms)
+    unsigned long diff = now - previousWifiLedMillis;
+    if (diff >= ledInterval)
     {
       previousWifiLedMillis = now;
-      wifiLedState = !wifiLedState;
-      digitalWrite(WIFI_LED, wifiLedState ? LOW : HIGH);
+      digitalWrite(WIFI_LED, HIGH); // ON (Active Low)
+    }
+    else if (diff >= ledPulseDuration)
+    {
+      digitalWrite(WIFI_LED, LOW); // OFF
     }
   }
   else
@@ -201,12 +206,16 @@ void handleSensorLed()
   
 if (sensorType != "UNKNOWN")
   {
-    // Slow blink when sensor detected (3000ms interval)
-    if (now - previousSensorLedMillis >= ledInterval)
+    // Pulse blink when sensor detected (150ms ON every 3000ms)
+    unsigned long diff = now - previousSensorLedMillis;
+    if (diff >= ledInterval)
     {
       previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+      digitalWrite(SENSOR_LED, HIGH); // ON (Active Low)
+    }
+    else if (diff >= ledPulseDuration)
+    {
+      digitalWrite(SENSOR_LED, LOW); // OFF
     }
   }
   else
