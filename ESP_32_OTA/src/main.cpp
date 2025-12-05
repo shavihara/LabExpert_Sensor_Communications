@@ -50,6 +50,7 @@ String sensorID = "N/A";
 unsigned long previousWifiLedMillis = 0;
 unsigned long previousSensorLedMillis = 0;
 const unsigned long ledInterval = 3000;
+const unsigned long ledPulseDuration = 50;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
@@ -122,6 +123,7 @@ bool detectSensor()
           if (eepromData != "")
           {
             sensorType = eepromData;
+            lastSensorTypeReported = sensorType;
           }
           else
           {
@@ -179,12 +181,16 @@ void handleWifiLed()
   }
   else if (WiFi.status() == WL_CONNECTED)
   {
-    // Slow blink when WiFi connected (3000ms interval)
-    if (now - previousWifiLedMillis >= ledInterval)
+    // Pulse blink when WiFi connected (150ms ON every 3000ms)
+    unsigned long diff = now - previousWifiLedMillis;
+    if (diff >= ledInterval)
     {
       previousWifiLedMillis = now;
-      wifiLedState = !wifiLedState;
-      digitalWrite(WIFI_LED, wifiLedState ? LOW : HIGH);
+      digitalWrite(WIFI_LED, HIGH); // ON (Active Low)
+    }
+    else if (diff >= ledPulseDuration)
+    {
+      digitalWrite(WIFI_LED, LOW); // OFF
     }
   }
   else
@@ -199,27 +205,18 @@ void handleSensorLed()
 {
   unsigned long now = millis();
   
-  // Check if in Bluetooth provisioning mode
-  bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
-  
-  if (bluetoothMode)
+if (sensorType != "UNKNOWN")
   {
-    // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousSensorLedMillis >= 500)
+    // Pulse blink when sensor detected (150ms ON every 3000ms)
+    unsigned long diff = now - previousSensorLedMillis;
+    if (diff >= ledInterval)
     {
       previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+      digitalWrite(SENSOR_LED, HIGH); // ON (Active Low)
     }
-  }
-  else if (sensorType != "UNKNOWN")
-  {
-    // Slow blink when sensor detected (3000ms interval)
-    if (now - previousSensorLedMillis >= ledInterval)
+    else if (diff >= ledPulseDuration)
     {
-      previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
+      digitalWrite(SENSOR_LED, LOW); // OFF
     }
   }
   else
@@ -235,7 +232,7 @@ void setupRoutes()
   server.on("/", HTTP_GET, []()
             {
     String html =
-      "<h1>ESP32 OTA Manager</h1>"
+      "<h1>LabExpert Module OTA Manager</h1>"
       "<p>Sensor: " + sensorType + " (ID: " + sensorID + ")</p>"
       "<form method='POST' action='/update' enctype='multipart/form-data'>"
       "<input type='file' name='update'>"
@@ -280,7 +277,12 @@ void setupRoutes()
   server.on("/info", HTTP_GET, []()
             {
     JsonDocument doc;  // NEW
-    doc["sensor_type"] = sensorType;
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["sensor_type"] = reportedType;
+    }
     doc["sensor_id"] = sensorID;
     String jsonResp;
     serializeJson(doc, jsonResp);
@@ -332,7 +334,12 @@ void setupRoutes()
   server.on("/id", HTTP_GET, []()
             {
     JsonDocument doc;
-    doc["id"] = sensorType; // Use sensorType as ID for firmware selection
+    {
+      String reportedType = (sensorType == "UNKNOWN" && lastSensorTypeReported != "UNKNOWN")
+                            ? lastSensorTypeReported
+                            : sensorType;
+      doc["id"] = reportedType;
+    }
     String json;
     serializeJson(doc, json);
     server.send(200, "application/json", json); });
@@ -604,23 +611,7 @@ void setup()
 
   if (!detectSensor())
   {
-    Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-    for (int i = 0; i < 3; i++)
-    {
-      delay(5000); // Wait 5 seconds per attempt
-      if (detectSensor())
-      {
-        Serial.println("✓ Sensor reconnected.");
-        break;
-      }
-      Serial.printf("✘ Reconnection attempt %d/3 failed.\n", i + 1);
-    }
-    if (sensorType == "UNKNOWN")
-    {
-      Serial.println("✘ Giving up. Rebooting...");
-      delay(2000);
-      esp_restart();
-    }
+    Serial.println("✘ Sensor not detected. Continuing in bootloader mode; network services will remain active.");
   }
 
   // Check if we should run in bootloader mode (custom partition 0)
@@ -747,14 +738,9 @@ void loop()
     if (sensorType != prev)
     {
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
-
-      if (sensorType == "UNKNOWN")
+      if (!detectSensor())
       {
-        Serial.println("Sensor unplug detected; erasing inactive OTA partition and rebooting to bootloader mode");
-        eraseInactivePartition();
-        // Force reboot to ensure we're in bootloader mode when sensor is unplugged
-        delay(1000);
-        ESP.restart();
+        Serial.println("✘ Sensor not detected. Keeping network services active, waiting for reconnection...");
       }
     }
   }
