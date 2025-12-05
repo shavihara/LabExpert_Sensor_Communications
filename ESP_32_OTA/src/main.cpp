@@ -1,6 +1,5 @@
 #include <WiFi.h>
 #include "wifi_credentials.h"
-
 WiFiCredentialManager wifiMgr;
 #include <WebServer.h>
 #include <Update.h>
@@ -22,6 +21,7 @@ static String getDeviceIDFromMAC();
 // EEPROM config
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
+#define EEPROM_WP_PIN 23
 
 // Wi-Fi credentials - Managed by WiFiCredentialManager
 // const char* ssid = "LabExpert_Hotspot"; // REMOVED
@@ -127,6 +127,7 @@ bool detectSensor()
           {
             sensorType = "UNKNOWN";
             Serial.printf("⚠️ WARNNING!(Sensor Type: %s, ID: %s unable to recognize!)\n", sensorType.c_str(), sensorID.c_str());
+            digitalWrite(EEPROM_WP_PIN, LOW);
           }
           Serial.printf("Sensor Type: %s, ID: %s\n", sensorType.c_str(), sensorID.c_str());
           return (sensorType != "UNKNOWN");
@@ -289,6 +290,45 @@ void setupRoutes()
   server.on("/ping", HTTP_GET, []()
             { server.send(200, "text/plain", "pong"); });
 
+  // Repair sensor EEPROM route
+  server.on("/sensor/repair", HTTP_POST, []()
+            {
+    String body = server.arg("plain");
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body);
+    if (err) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"bad_json\"}");
+      return;
+    }
+    String id = (const char*)(doc["id"] | "");
+    id.trim();
+    if (id.length() != 3) {
+      server.send(400, "application/json", "{\"success\":false,\"error\":\"invalid_id\"}");
+      return;
+    }
+    // Allow write: pull WP low
+    digitalWrite(EEPROM_WP_PIN, LOW);
+    delay(5);
+    // Write 3 chars to 24C02 starting at 0x00
+    Wire.beginTransmission(EEPROM_SENSOR_ADDR);
+    Wire.write((uint8_t)0x00);
+    Wire.write((uint8_t)id[0]);
+    Wire.write((uint8_t)id[1]);
+    Wire.write((uint8_t)id[2]);
+    Wire.endTransmission();
+    delay(10);
+    // Set WP high again
+    digitalWrite(EEPROM_WP_PIN, HIGH);
+    // Re-read sensor
+    bool ok = detectSensor();
+    JsonDocument resp;
+    resp["success"] = ok;
+    resp["sensor_type"] = sensorType;
+    String json;
+    serializeJson(resp, json);
+    server.send(ok ? 200 : 500, "application/json", json);
+  });
+
   server.on("/id", HTTP_GET, []()
             {
     JsonDocument doc;
@@ -406,6 +446,8 @@ void handleUDPDiscovery()
           
           // 1. Get Backend MAC from JSON (for security verification)
           const char* backendMAC = discoveryDoc["backend_mac"];
+
+
           
           // 2. Get Broker IP from UDP Packet Source (Dynamic & Robust)
           // We ignore any IP in the JSON and trust the network layer.
@@ -414,6 +456,8 @@ void handleUDPDiscovery()
           
           // Default port since we removed it from JSON
           uint16_t mqttPort = 1883; 
+
+
             
             // Inside handleUDPDiscovery()
             if (mqttBroker && strlen(mqttBroker) > 0) {
@@ -438,9 +482,12 @@ void handleUDPDiscovery()
                 // No stored Host MAC to verify against - log warning but decide whether to allow
                 Serial.println("⚠️ MQTT Config Ignored: No Host MAC stored in NVS to verify against.");
               }
+
               if (shouldSave) {
                 // Save MQTT credentials to NVS
                 // Note: We are saving the UDP Source IP as the broker
+
+
                 if (saveMQTTCredentialsToNVS(mqttBroker, mqttPort, backendMAC)) {
                   Serial.printf("📡 MQTT broker discovered and saved: %s:%d\n", mqttBroker, mqttPort);
                   sMqttConfigured = true; // Set flag to prevent future writes
@@ -516,11 +563,8 @@ bool connectWithDynamicIP()
     return false;
   }
 
-  const char* ssid = wifiMgr.getSSID();
-  const char* password = wifiMgr.getPassword();
-
-  Serial.printf("🔧 Connecting to WiFi: %s using DHCP...\n", ssid);
-  return connectWithDHCP(ssid, password);
+  Serial.printf("🔧 Connecting to WiFi (saved credentials) using DHCP...\n");
+  return wifiMgr.connectWiFi();
 }
 
 // ========== Setup ==========
@@ -551,8 +595,10 @@ void setup()
 
   pinMode(WIFI_LED, OUTPUT);
   pinMode(SENSOR_LED, OUTPUT);
+  pinMode(EEPROM_WP_PIN, OUTPUT);
   digitalWrite(WIFI_LED, HIGH);
   digitalWrite(SENSOR_LED, HIGH);
+  digitalWrite(EEPROM_WP_PIN, HIGH);
 
   Wire.begin(18, 19); // SDA, SCL
 
