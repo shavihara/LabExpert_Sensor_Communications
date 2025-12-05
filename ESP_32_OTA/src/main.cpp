@@ -172,7 +172,7 @@ void handleWifiLed()
   if (bluetoothMode)
   {
     // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousWifiLedMillis >= 100)
+    if (now - previousWifiLedMillis >= 500)
     {
       previousWifiLedMillis = now;
       wifiLedState = !wifiLedState;
@@ -329,6 +329,8 @@ void setupRoutes()
     String json;
     serializeJson(resp, json);
     server.send(ok ? 200 : 500, "application/json", json);
+    delay(1000);
+    ESP.restart();
   });
 
   server.on("/id", HTTP_GET, []()
@@ -611,20 +613,7 @@ void setup()
 
   if (!detectSensor())
   {
-    Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-    WiFi.disconnect();
-    delay(2000);
-    for (int i = 0; i < 3;)
-    {
-      delay(5000); // Wait 5 seconds per attempt
-      if (detectSensor())
-      {
-        Serial.println("✓ Sensor reconnected.");
-        break;
-      }
-      Serial.printf("✘ Reconnection attempt failed.\n");
-      i=1;
-    }
+    Serial.println("✘ Sensor not detected. Continuing in bootloader mode; network services will remain active.");
   }
 
   // Check if we should run in bootloader mode (custom partition 0)
@@ -753,20 +742,7 @@ void loop()
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
       if (!detectSensor())
       {
-        Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-        WiFi.disconnect();
-        delay(2000);
-        for (int i = 0; i < 3;)
-        {
-          delay(5000); // Wait 5 seconds per attempt
-          if (detectSensor())
-          {
-            Serial.println("✓ Sensor reconnected.");
-            break;
-          }
-          Serial.printf("✘ Reconnection attempt failed.\n");
-          i=1;
-        }
+        Serial.println("✘ Sensor not detected. Keeping network services active, waiting for reconnection...");
       }
     }
   }
