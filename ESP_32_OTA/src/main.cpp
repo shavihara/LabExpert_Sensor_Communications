@@ -198,20 +198,7 @@ void handleSensorLed()
 {
   unsigned long now = millis();
   
-  // Check if in Bluetooth provisioning mode
-  bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
-  
-  if (bluetoothMode)
-  {
-    // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousSensorLedMillis >= 500)
-    {
-      previousSensorLedMillis = now;
-      sensorLedState = !sensorLedState;
-      digitalWrite(SENSOR_LED, sensorLedState ? LOW : HIGH);
-    }
-  }
-  else if (sensorType != "UNKNOWN")
+if (sensorType != "UNKNOWN")
   {
     // Slow blink when sensor detected (3000ms interval)
     if (now - previousSensorLedMillis >= ledInterval)
@@ -234,7 +221,7 @@ void setupRoutes()
   server.on("/", HTTP_GET, []()
             {
     String html =
-      "<h1>ESP32 OTA Manager</h1>"
+      "<h1>LabExpert Module OTA Manager</h1>"
       "<p>Sensor: " + sensorType + " (ID: " + sensorID + ")</p>"
       "<form method='POST' action='/update' enctype='multipart/form-data'>"
       "<input type='file' name='update'>"
@@ -559,7 +546,9 @@ void setup()
   if (!detectSensor())
   {
     Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-    for (int i = 0; i < 3; i++)
+    WiFi.disconnect();
+    delay(2000);
+    for (int i = 0; i < 3;)
     {
       delay(5000); // Wait 5 seconds per attempt
       if (detectSensor())
@@ -567,13 +556,8 @@ void setup()
         Serial.println("✓ Sensor reconnected.");
         break;
       }
-      Serial.printf("✘ Reconnection attempt %d/3 failed.\n", i + 1);
-    }
-    if (sensorType == "UNKNOWN")
-    {
-      Serial.println("✘ Giving up. Rebooting...");
-      delay(2000);
-      esp_restart();
+      Serial.printf("✘ Reconnection attempt failed.\n");
+      i=1;
     }
   }
 
@@ -701,14 +685,22 @@ void loop()
     if (sensorType != prev)
     {
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
-
-      if (sensorType == "UNKNOWN")
+      if (!detectSensor())
       {
-        Serial.println("Sensor unplug detected; erasing inactive OTA partition and rebooting to bootloader mode");
-        eraseInactivePartition();
-        // Force reboot to ensure we're in bootloader mode when sensor is unplugged
-        delay(1000);
-        ESP.restart();
+        Serial.println("✘ Sensor not detected. Waiting for reconnection...");
+        WiFi.disconnect();
+        delay(2000);
+        for (int i = 0; i < 3;)
+        {
+          delay(5000); // Wait 5 seconds per attempt
+          if (detectSensor())
+          {
+            Serial.println("✓ Sensor reconnected.");
+            break;
+          }
+          Serial.printf("✘ Reconnection attempt failed.\n");
+          i=1;
+        }
       }
     }
   }

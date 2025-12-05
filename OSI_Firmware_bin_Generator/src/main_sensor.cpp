@@ -54,12 +54,15 @@ void setup()
     // Initialize OSI-specific pins
     pinMode(SENSOR_LED, OUTPUT);
     pinMode(WIFI_LED, OUTPUT);
-    pinMode(SENSOR_PIN, INPUT);
+    // pinMode(SENSOR_PIN, INPUT); // Removed: using INPUT_PULLUP later
     digitalWrite(SENSOR_LED, LOW);
     digitalWrite(WIFI_LED, HIGH);
     
     // Configure restart trigger pin with internal pull-up resistor
     pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
+
+    // Configure SENSOR_PIN with internal pull-up as requested
+    pinMode(SENSOR_PIN, INPUT_PULLUP);
 
     delay(300);
     
