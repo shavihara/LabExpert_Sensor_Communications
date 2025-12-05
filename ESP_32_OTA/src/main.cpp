@@ -50,7 +50,7 @@ String sensorID = "N/A";
 unsigned long previousWifiLedMillis = 0;
 unsigned long previousSensorLedMillis = 0;
 const unsigned long ledInterval = 3000;
-const unsigned long ledPulseDuration = 20;
+const unsigned long ledPulseDuration = 50;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
@@ -172,7 +172,7 @@ void handleWifiLed()
   if (bluetoothMode)
   {
     // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousWifiLedMillis >= 100)
+    if (now - previousWifiLedMillis >= 500)
     {
       previousWifiLedMillis = now;
       wifiLedState = !wifiLedState;
@@ -611,20 +611,7 @@ void setup()
 
   if (!detectSensor())
   {
-    Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-    WiFi.disconnect();
-    delay(2000);
-    for (int i = 0; i < 3;)
-    {
-      delay(5000); // Wait 5 seconds per attempt
-      if (detectSensor())
-      {
-        Serial.println("✓ Sensor reconnected.");
-        break;
-      }
-      Serial.printf("✘ Reconnection attempt failed.\n");
-      i=1;
-    }
+    Serial.println("✘ Sensor not detected. Continuing in bootloader mode; network services will remain active.");
   }
 
   // Check if we should run in bootloader mode (custom partition 0)
@@ -753,20 +740,7 @@ void loop()
       Serial.printf("Sensor type changed: %s -> %s\n", prev.c_str(), sensorType.c_str());
       if (!detectSensor())
       {
-        Serial.println("✘ Sensor not detected. Waiting for reconnection...");
-        WiFi.disconnect();
-        delay(2000);
-        for (int i = 0; i < 3;)
-        {
-          delay(5000); // Wait 5 seconds per attempt
-          if (detectSensor())
-          {
-            Serial.println("✓ Sensor reconnected.");
-            break;
-          }
-          Serial.printf("✘ Reconnection attempt failed.\n");
-          i=1;
-        }
+        Serial.println("✘ Sensor not detected. Keeping network services active, waiting for reconnection...");
       }
     }
   }
