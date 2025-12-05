@@ -32,9 +32,6 @@ char password[65];  // Will be loaded from NVS
 bool connectWithDynamicIP();
 bool connectWithDHCP();
 
-// Forward declaration
-void cleanFirmwareAndBootOTA();
-
 // MQTT configuration - Loaded from NVS (set by OTA bootloader via UDP discovery)
 char mqttBroker[40] = "";
 uint16_t mqttPort = 1883;
@@ -62,7 +59,7 @@ void setup()
     pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
 
     // Configure SENSOR_PIN with internal pull-up as requested
-    pinMode(SENSOR_PIN, INPUT_PULLUP);
+    pinMode(SENSOR_PIN, INPUT);
 
     delay(300);
     

@@ -6,7 +6,7 @@
 #include <ESPAsyncWebServer.h>
 
 // Pin definitions
-#define SENSOR_PIN 4
+#define SENSOR_PIN 33
 #define WIFI_LED 14
 #define SENSOR_LED 13
 

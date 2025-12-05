@@ -22,6 +22,7 @@ extern int dataIndex;
 extern bool sensorWasPresent;
 extern unsigned long lastExperimentEnd;
 extern bool backendCleanupRequested;
+extern float pendulumLengthCm;
 
 // Function declarations
 void manageExperimentLoop();

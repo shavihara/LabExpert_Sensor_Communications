@@ -29,4 +29,7 @@ void publishStatus(const char *status, const char *message = nullptr);
 void publishSensorIdentification();
 String formatTime(unsigned long milliseconds);
 
+// Firmware cleanup and OTA boot
+void cleanFirmwareAndBootOTA();
+
 #endif

@@ -28,28 +28,13 @@ unsigned long lastOscillationEndTime = 0;
 bool sensorWasPresent = false;
 unsigned long lastExperimentEnd = 0;
 bool backendCleanupRequested = false;
+float pendulumLengthCm = 0.0f;
 
 void startExperiment(int count)
 {
     if (experimentRunning)
         return;
 
-    // Limit maximum count to fit in reduced arrays
-    if (count > 10)
-        count = 10; // Max 10 oscillations (20 data points) -> Wait, user wants 20?
-                    // The user said "if user ask 20 ocsillation".
-                    // The array size is small [20].
-                    // If we just report cumulative time, maybe we don't need to store everything?
-                    // But the code uses `disconnectTimes` array.
-                    // For now, I will keep the limit but maybe I should increase it if possible?
-                    // The user didn't explicitly ask to increase the array, but mentioned 20.
-                    // 20 oscillations = 41 cuts.
-                    // If I don't store them and just publish, I don't need the array.
-                    // The current code publishes immediately: `publishOscillationData`.
-                    // So I might not need the arrays for immediate publishing.
-                    // But `publishExperimentSummary` uses them.
-                    // I will stick to the logic but be aware of the limit.
-                    // Actually, I'll just increase the limit to 20 oscillations (which is what the user mentioned).
 
     experimentRunning = true;
     dataReady = false;
@@ -89,11 +74,24 @@ void processSensorState()
     if (currentState == HIGH && lastSensorState == LOW)
     {
         // Rising Edge Detected (Cut)
-        
+        unsigned long currentTime = millis();
+        static unsigned long lastCutTime = 0;
+
+        // Debounce / Noise Filter
+        // Ignore cuts that happen too close to the previous one (< 200ms)
+        if (currentTime - lastCutTime < 200 && !waitingForFirstCut) 
+        {
+             // Serial.println("⚠️ Ignored rapid cut (debounce)");
+             lastSensorState = currentState;
+             return;
+        }
+
+        lastCutTime = currentTime;
+
         if (waitingForFirstCut)
         {
             // This is the 1st Cut - Start the Timer
-            experimentStartTime = millis();
+            experimentStartTime = currentTime;
             waitingForFirstCut = false;
             cutCount = 1;
             lastOscillationEndTime = 0; // Start time relative to experiment start is 0
@@ -104,7 +102,6 @@ void processSensorState()
         {
             // Subsequent Cuts
             cutCount++;
-            unsigned long currentTime = millis();
             unsigned long totalElapsedTime = currentTime - experimentStartTime;
             
             Serial.printf("✂️ Cut %d detected at %lu ms\n", cutCount, totalElapsedTime);
