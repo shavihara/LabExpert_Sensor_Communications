@@ -50,7 +50,7 @@ String sensorID = "N/A";
 unsigned long previousWifiLedMillis = 0;
 unsigned long previousSensorLedMillis = 0;
 const unsigned long ledInterval = 3000;
-const unsigned long ledPulseDuration = 50;
+const unsigned long ledPulseDuration = 20;
 bool wifiLedState = false;
 bool sensorLedState = false;
 
