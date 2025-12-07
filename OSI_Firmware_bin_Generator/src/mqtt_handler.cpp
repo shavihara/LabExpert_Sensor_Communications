@@ -13,6 +13,7 @@ extern char mqttBroker[40];
 extern uint16_t mqttPort;
 
 // MQTT status
+extern void cleanFirmwareAndBootOTA();
 bool mqttConnected = false;
 
 String formatTime(unsigned long milliseconds)
