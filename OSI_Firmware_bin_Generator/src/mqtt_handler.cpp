@@ -2,6 +2,7 @@
 #include "sensor_communication.h"
 #include "experiment_manager.h"
 #include "../../shared/nvs_mqtt_credentials.h"
+#include <Arduino.h>
 
 // MQTT client
 WiFiClient wifiClient;
@@ -92,16 +93,33 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
     }
 
     // Handle command messages
-    const char *command = doc["command"];
-
-    if (strcmp(command, "start_experiment") == 0)
+    if (doc.containsKey("command"))
     {
-        int count = doc["count"] | 20;
+        const char *command = doc["command"];
+
+        if (strcmp(command, "start_experiment") == 0)
+        {
+        int count = 20;
+        if (doc.containsKey("max_count")) {
+            count = doc["max_count"].as<int>();
+        } else if (doc.containsKey("maxCount")) {
+            count = doc["maxCount"].as<int>();
+        } else if (doc.containsKey("count")) {
+            count = doc["count"].as<int>();
+        }
+
+        float lengthCm = 0.0f;
+        if (doc.containsKey("pendulum_length_cm")) {
+            lengthCm = doc["pendulum_length_cm"].as<float>();
+        } else if (doc.containsKey("pendulumLengthCm")) {
+            lengthCm = doc["pendulumLengthCm"].as<float>();
+        }
+
+        pendulumLengthCm = lengthCm;
 
         if (!experimentRunning)
         {
             startExperiment(count);
-            // experimentStartTime is set inside startExperiment
             publishStatus("experiment_started");
         }
     }
@@ -115,15 +133,17 @@ void mqttCallback(char *topic, byte *payload, unsigned int length)
         Serial.println("Disconnect command received - cleaning firmware and booting to OTA");
         publishStatus("disconnecting", "Device disconnecting and booting to OTA");
         
-        // Clean up and prepare for OTA boot
-        delay(1000); // Give time for status message to be sent
-        
-        // Clean firmware partition and boot to OTA
+        delay(1000);
         cleanFirmwareAndBootOTA();
     }
     else if (strcmp(command, "status") == 0)
     {
         publishSensorIdentification();
+    }
+    }
+    else
+    {
+        Serial.println("Ignored non-command message");
     }
 }
 
@@ -135,10 +155,16 @@ void publishOscillationData(int oscCount, unsigned long disconnectTime, unsigned
     }
 
     // Create JSON payload
-    DynamicJsonDocument doc(128);
+    DynamicJsonDocument doc(192);
     doc["count"] = oscCount;
+    // Human-readable times
     doc["disconnect_time"] = formatTime(disconnectTime);
     doc["reconnect_time"] = formatTime(reconnectTime);
+    // Raw millisecond timestamps for backend analysis
+    doc["disconnect_time_ms"] = disconnectTime;
+    doc["reconnect_time_ms"] = reconnectTime;
+    // For oscillation period calculation, use reconnect time as the event timestamp
+    doc["oscillation_time_ms"] = reconnectTime;
     doc["sensor_id"] = sensorID;
 
     String payload;
