@@ -5,16 +5,41 @@ This table aggregates all pin usage across different experiments/firmwares on th
 
 | Pin | Usage (Experiment: Function) | Hardware Configuration |
 | :--- | :--- | :--- |
-| **13** | **All**: Status LED | Output |
-| **14** | **OSI**: WiFi LED, **OTA**: WiFi LED | Output |
+| **12** | **All**: BLE Status LED | Output (Active Low) |
+| **13** | **All**: Sensor Connected LED | Output (Active Low) |
+| **14** | **All**: WiFi Status LED | Output (Active Low) |
+| **16** | **All**: OTA Status LED | Output (Active Low) |
 | **18** | **All**: EEPROM SDA | External Pullup (I2C) |
 | **19** | **All**: EEPROM SCL | External Pullup (I2C) |
 | **21** | **TOF**: SDA, **ULT**: Trig, **BH**: SDA, **Mic**: SD | External Pullup (I2C) |
 | **22** | **TOF**: SCL, **ULT**: Echo, **BH**: SCL, **Mic**: SCK | External Pullup (I2C) |
-| **23** | **THR**: OneWire, **TOF**: LDR, **OTA**: EEPROM WP | Ext Pullup (THR) / Int Pullup (TOF) / Output (OTA) |
+| **23** | **THR**: OneWire, **TOF**: LDR | Ext Pullup (THR) / Ext Pullup (TOF) |
+| **25** | **OTA**: EEPROM WP | Output (High = Protect, Low = Write) |
 | **26** | **TOF**: Motor Left PWM, **Mic**: WS | Output |
+| **27** | **All**: Sensor Active LED | Output (Active Low) |
 | **32** | **OSI**: Restart Trigger | Internal Pullup |
 | **33** | **TOF**: Motor Right PWM, **OSI**: Sensor | Output (TOF) / Internal Pullup (OSI) |
+| **34** | **OTA**: BLE Trigger / Factory Reset | Input (External 10k Pull-up Required) |
+| **35** | **TOF**: Shared Limit Switch (OR Gate) | Input (3.3V Logic - External Supply) |
+
+**LED Logic (Active Low - VCC -> LED -> Pin):**
+
+*   **Pin 14 (WiFi LED):**
+    *   **Disconnected:** ON (`LOW`)
+    *   **Connected:** Blink (`Toggle`)
+    *   **Bluetooth On:** OFF (`HIGH`)
+*   **Pin 12 (BLE LED):**
+    *   **BLE On (Advertising):** ON (`LOW`)
+    *   **BLE Connected:** Blink (`Toggle`)
+    *   **BLE Off:** OFF (`HIGH`)
+*   **Pin 13 (Sensor Connected LED):**
+    *   **Sensor Connected:** OFF (`HIGH`)
+    *   **Sensor Disconnected:** ON (`LOW`)
+*   **Pin 27 (Sensor Active LED):**
+    *   **Sensor Connected & Active:** Blink (`Toggle`)
+    *   **Sensor Disconnected/Idle:** OFF (`HIGH`)
+*   **Pin 16 (OTA LED):**
+    *   **OTA Restart Triggered:** Fast Blink (`Toggle`)
 
 ---
 
@@ -26,7 +51,12 @@ This table aggregates all pin usage across different experiments/firmwares on th
 | **23** | `ONE_WIRE_BUS` | **DS18B20 Data** | Input/Output (Requires External Pullup ~4.7kΩ) |
 | **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Requires Pullup) |
 | **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Requires Pullup) |
-| **13** | `STATUS_LED` | **Status LED** | Output |
+| **32** | `RESTART_PIN`| **OTA Restart Trigger** | Input Internal Pullup |
+| **14** | `WIFI_LED` | **WiFi Status** | Output (Active Low) |
+| **12** | `BLE_LED` | **BLE Status** | Output (Active Low) |
+| **13** | `SENSOR_LED` | **Sensor Connection** | Output (Active Low) |
+| **27** | `ACTIVE_LED` | **Experiment Active** | Output (Active Low) |
+| **16** | `OTA_LED` | **OTA Status** | Output (Active Low) |
 
 ---
 
@@ -39,10 +69,12 @@ This table aggregates all pin usage across different experiments/firmwares on th
 | **22** | `TOF_SCL` | **VL53L1X Clock** | I2C (Requires Pullup) |
 | **33** | `RPWM_PIN` | **Motor Right PWM** | Output |
 | **26** | `LPWM_PIN` | **Motor Left PWM** | Output |
-| **23** | `LDR_PIN` | **Encoder/Limit Switch**| **Input Internal Pullup** (`INPUT_PULLUP`) |
+| **23** | `LDR_PIN` | **Encoder/Limit Switch**| **Input** (External Pullup exists) |
 | **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Requires Pullup) |
 | **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Requires Pullup) |
-| **13** | `SENSOR_LED` | **Status LED** | Output |
+| **32** | `RESTART_PIN`| **OTA Restart Trigger** | Input Internal Pullup |
+| **35** | `LIMIT_PIN` | **Combined Limit Switch** | **Input** (Active HIGH. 3.3V Logic) |
+| **14, 12, 13, 27, 16** | **LEDs** | **Status Indicators** | Output (Active Low) |
 
 ---
 
@@ -51,12 +83,11 @@ This table aggregates all pin usage across different experiments/firmwares on th
 
 | Pin | Name | Usage | Configuration |
 | :--- | :--- | :--- | :--- |
-| **33** | `SENSOR_PIN` | **Oscillation Sensor** | **Input** (Firmware default. Recommend External Pullup if sensor is Open-Drain/Collector, or change FW to `INPUT_PULLUP`) |
+| **33** | `SENSOR_PIN` | **Oscillation Sensor** | **Input** (Internal Pullup recommended) |
 | **32** | `RESTART_PIN`| **OTA Restart Trigger** | **Input Internal Pullup** (`INPUT_PULLUP`) |
 | **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Requires Pullup) |
 | **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Requires Pullup) |
-| **14** | `WIFI_LED` | **WiFi Status LED** | Output |
-| **13** | `SENSOR_LED` | **Sensor Status LED** | Output |
+| **14, 12, 13, 27, 16** | **LEDs** | **Status Indicators** | Output (Active Low) |
 
 ---
 
@@ -69,7 +100,8 @@ This table aggregates all pin usage across different experiments/firmwares on th
 | **22** | `ECHO_PIN` | **Sensor Echo** | Input (Sensor drives High/Low, overrides I2C pullups) |
 | **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Requires Pullup) |
 | **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Requires Pullup) |
-| **13** | `SENSOR_LED` | **Status LED** | Output |
+| **32** | `RESTART_PIN`| **OTA Restart Trigger** | Input Internal Pullup |
+| **14, 12, 13, 27, 16** | **LEDs** | **Status Indicators** | Output (Active Low) |
 
 ---
 
@@ -78,11 +110,10 @@ This table aggregates all pin usage across different experiments/firmwares on th
 
 | Pin | Name | Usage | Configuration |
 | :--- | :--- | :--- | :--- |
-| **21** | `SDA` | **BH1750 Data** | I2C (Requires Pullup - Shared with TOF) |
-| **22** | `SCL` | **BH1750 Clock** | I2C (Requires Pullup - Shared with TOF) |
-| **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Standard System Bus) |
-| **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Standard System Bus) |
-| **13** | `STATUS_LED` | **Status LED** | Output (Standard System LED) |
+| **21** | `SDA` | **BH1750 Data** | I2C (Shared with TOF) |
+| **22** | `SCL` | **BH1750 Clock** | I2C (Shared with TOF) |
+| **18, 19** | `EEPROM` | **System Bus** | I2C |
+| **13** | `LED` | **Status** | Output |
 
 ---
 
@@ -90,30 +121,28 @@ This table aggregates all pin usage across different experiments/firmwares on th
 *Target: ESP32 (Shared Pins)*
 
 **⚠️ CRITICAL WIRING NOTE:**
-*   You **CANNOT** ground the **WS (Word Select)** pin. It is a **Clock Signal** driven by the ESP32.
-*   You **SHOULD** ground the **L/R** pin to select the Left Channel.
+*   **WS (Pin 26)** MUST be connected to ESP32.
+*   **L/R** SHOULD be grounded.
 
 | Pin | Name | Usage | Configuration |
 | :--- | :--- | :--- | :--- |
-| **22** | `I2S_SCK (BCLK)`| **Serial Clock** | Output (ESP32 drives this) |
-| **21** | `I2S_SD (DOUT)` | **Serial Data** | Input (Microphone drives this) |
-| **26** | `I2S_WS (LRCLK)`| **Word Select** | Output (ESP32 drives this) - **MUST CONNECT** |
-| **GND** | `L/R` | **Channel Select** | **Connect to GND** (Selects Left Channel) |
-| **3.3V**| `VDD` | **Power** | |
-| **GND** | `GND` | **Ground** | |
+| **22** | `BCLK` | **Serial Clock** | Output |
+| **21** | `DOUT` | **Serial Data** | Input |
+| **26** | `LRCLK`| **Word Select** | Output |
 
 ---
 
 ## 7. OTA Bootloader
 *Project: `ESP_32_OTA`*
 
-This is the base firmware that manages updates and sensor detection.
-
 | Pin | Name | Usage | Configuration |
 | :--- | :--- | :--- | :--- |
-| **14** | `WIFI_LED` | **WiFi Status LED** | Output |
-| **12** | `BLE_LED` | **BLE Status LED** | Output |
-| **13** | `SENSOR_LED` | **Sensor Status LED** | Output |
+| **14** | `WIFI_LED` | **WiFi Status** | Output (Active Low) |
+| **12** | `BLE_LED` | **BLE Status** | Output (Active Low) |
+| **13** | `SENSOR_LED` | **Sensor Status** | Output (Active Low) |
+| **16** | `OTA_LED` | **OTA Status** | Output (Active Low) |
+| **27** | `ACTIVE_LED` | **Active Status** | Output (Active Low) |
 | **25** | `EEPROM_WP` | **EEPROM Write Protect**| Output (High = Protect, Low = Write) |
+| **34** | `BLE_TRIGGER`| **Factory Reset / BLE** | **Input** (Hold 3s to erase creds. Req 10k ext pull-up) |
 | **18** | `EEPROM_SDA` | **EEPROM I2C Data** | I2C (Requires Pullup) |
 | **19** | `EEPROM_SCL` | **EEPROM I2C Clock**| I2C (Requires Pullup) |

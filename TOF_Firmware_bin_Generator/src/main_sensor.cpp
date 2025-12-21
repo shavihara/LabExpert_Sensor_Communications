@@ -21,12 +21,24 @@
 #include "../../shared/nvs_mqtt_credentials.h"
 
 // Hardware configuration - I2C Pins
-// STATUS_LED is defined in config_handler.h
 #define RESTART_TRIGGER_PIN 32
+#define BLE_LED_PIN 12 
+#define SENSOR_LED_PIN 13 
+#define WIFI_LED_PIN 14 
+#define OTA_LED_PIN 16
 #define EEPROM_SDA 18
 #define EEPROM_SCL 19
 #define TOF_SDA 21
 #define TOF_SCL 22
+#define SENSOR_ACTIVE_LED_PIN 27
+
+#include "../../shared/LedController.h"
+
+LedController wifiLed(WIFI_LED_PIN, true);   // Active LOW
+LedController bleLed(BLE_LED_PIN, true);     // Active LOW
+LedController sensorLed(SENSOR_LED_PIN, true); // Active LOW
+LedController sensorActiveLed(SENSOR_ACTIVE_LED_PIN, true); // Active LOW
+LedController otaLed(OTA_LED_PIN, true);     // Active LOW
 
 // Network configuration - WiFi credentials loaded from NVS at runtime
 char ssid[33];      // Will be loaded from NVS
@@ -36,6 +48,7 @@ char password[65];  // Will be loaded from NVS
 // Function prototypes
 bool connectWithDynamicIP();
 bool connectWithDHCP();
+void safeRestartSequence(); // FWD DECLARE
 
 // MQTT configuration - Loaded from NVS (set by OTA bootloader via UDP discovery)
 char mqttBroker[40] = "";
@@ -60,8 +73,8 @@ void setup()
         Serial.println("❌ No WiFi credentials found in NVS!");
         Serial.println("Booting back to OTA for credential provisioning...");
         delay(2000);
-        cleanFirmwareAndBootOTA();
-        return; // cleanFirmwareAndBootOTA will restart, but just in case
+        safeRestartSequence();
+        return; // safeRestartSequence calls cleanFirmwareAndBootOTA which restarts
     }
 
     // Load MQTT credentials from NVS
@@ -71,7 +84,7 @@ void setup()
         Serial.println("❌ No MQTT credentials found in NVS");
         Serial.println("   Rebooting to OTA bootloader for initial setup...");
         delay(2000);
-        cleanFirmwareAndBootOTA();
+        safeRestartSequence();
         return;
     }
     
@@ -80,8 +93,15 @@ void setup()
         Serial.printf("   Backend MAC: %s\n", backendMAC);
     }
 
-    pinMode(STATUS_LED, OUTPUT);
-    digitalWrite(STATUS_LED, HIGH);
+    // Init LEDs
+    wifiLed.begin();
+    bleLed.begin();
+    sensorLed.begin();
+    sensorActiveLed.begin();
+    otaLed.begin();
+    
+    wifiLed.set(LedController::ON); // ON = Disconnected
+    
     pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
 
     delay(300);
@@ -119,6 +139,7 @@ void setup()
     
     if (wifiConnected) {
         Serial.printf("\n✅ WiFi connected successfully. IP: %s\n", WiFi.localIP().toString().c_str());
+        wifiLed.set(LedController::BLINK_SLOW); // Connected
         
         // Detect sensor from EEPROM with failsafe mechanism
         bool sensorDetected = detectSensorFromEEPROM();
@@ -213,11 +234,34 @@ void setup()
 
     server.begin();
     Serial.println("HTTP server started");
-    digitalWrite(STATUS_LED, LOW);
+    
+     // Initial sensor LED state
+    if (sensorID != "UNKNOWN") {
+       sensorLed.set(LedController::OFF); // Connected
+    } else {
+       sensorLed.set(LedController::ON); // Disconnected
+    }
 }
 
 void loop()
 {
+    // Update LEDs
+    wifiLed.update();
+    bleLed.update();
+    sensorLed.update();
+    sensorActiveLed.update();
+    otaLed.update();
+    
+    // Sensor Active Logic:
+    // If experiment running -> Blink Pin 27
+    // Else -> OFF
+    if (experimentRunning) {
+        if (sensorActiveLed.getState() != LedController::BLINK_FAST) {
+             sensorActiveLed.set(LedController::BLINK_FAST);
+        }
+    } else {
+        sensorActiveLed.set(LedController::OFF);
+    }
     // Check sensor status periodically
     checkSensorStatus();
 
@@ -235,8 +279,8 @@ void loop()
     
     // Check restart trigger pin
     if (digitalRead(RESTART_TRIGGER_PIN) == LOW) {
-        Serial.println("⚠️ Restart trigger pin activated (LOW) - initiating OTA restart...");
-        cleanFirmwareAndBootOTA();
+        Serial.println("⚠️ Restart trigger pin activated (LOW) - initiating SAFE OTA restart...");
+        safeRestartSequence();
     }
 
     delay(1);
@@ -245,6 +289,31 @@ void loop()
     yield();
 }
 
+void safeRestartSequence() {
+    Serial.println("🛑 INITIATING SAFE RESTART SEQUENCE 🛑");
+    
+    // 1. Move Plane to MIN (Home)
+    experimentRunning = false; // Stop any active experiment logic
+    motor.executeSafeShutdown();
+    
+    unsigned long shutdownStart = millis();
+    while (!motor.isShutdownComplete()) {
+        motor.update(); // Keep processing motor logic
+        
+        // Timeout safety (e.g. 30 seconds)
+        if (millis() - shutdownStart > 30000) {
+            Serial.println("Safety Timeout! Forcing restart...");
+            break;
+        }
+        delay(10);
+    }
+    
+    Serial.println("✅ Safe Position Reached (or Timeout). Cleaning up...");
+    
+    // 2. Perform standard cleanup and OTA boot
+    cleanFirmwareAndBootOTA();
+}
+    
 void cleanFirmwareAndBootOTA()
 {
     Serial.println("Cleaning firmware and booting to OTA partition...");

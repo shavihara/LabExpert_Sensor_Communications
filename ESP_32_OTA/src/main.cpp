@@ -15,8 +15,18 @@ WiFiCredentialManager wifiMgr;
 static bool hexToBytes(const String &hex, std::vector<uint8_t> &out);
 static String getDeviceIDFromMAC();
 // GPIO pin setup
-#define WIFI_LED 14
-#define SENSOR_LED 13
+#define BLE_LED_PIN 12 
+#define SENSOR_LED_PIN 13 
+#define WIFI_LED_PIN 14 
+#define OTA_LED_PIN 16
+#define EEPROM_WP_PIN 25 
+
+#include "../../shared/LedController.h"
+
+LedController wifiLed(WIFI_LED_PIN, true);   // Active LOW
+LedController bleLed(BLE_LED_PIN, true);     // Active LOW
+LedController sensorLed(SENSOR_LED_PIN, true); // Active LOW
+LedController otaLed(OTA_LED_PIN, true);     // Active LOW
 
 // EEPROM config
 #define EEPROM_SENSOR_ADDR 0x50
@@ -46,13 +56,8 @@ String lastSensorTypeReported = "UNKNOWN";
 String sensorType = "UNKNOWN";
 String sensorID = "N/A";
 
-// LED blink state
-unsigned long previousWifiLedMillis = 0;
-unsigned long previousSensorLedMillis = 0;
-const unsigned long ledInterval = 3000;
-const unsigned long ledPulseDuration = 20;
-bool wifiLedState = false;
-bool sensorLedState = false;
+// LED blink state managed by LedController
+
 
 // Retry mechanism for EEPROM detection
 #define EEPROM_RETRY_COUNT 3
@@ -169,68 +174,57 @@ bool detectSensor()
   return false;
 }
 
-// ========== Wi-Fi LED status ==========
-void handleWifiLed()
+// ========== Wi-Fi & BLE LED status ==========
+void handleLeds()
 {
-  unsigned long now = millis();
+  wifiLed.update();
+  bleLed.update();
+  sensorLed.update();
+  otaLed.update();
+
+  // WiFi LED Logic
+  // Disconnected -> ON
+  // Connected -> Blink
+  // Bluetooth On -> OFF (Handled by checking if in Provisioning Mode)
   
   // Check if in Bluetooth provisioning mode (not connected and no saved credentials)
   bool bluetoothMode = (WiFi.status() != WL_CONNECTED) && !wifiMgr.checkSavedCredentials();
   
-  if (bluetoothMode)
-  {
-    // Fast blink for Bluetooth provisioning mode (500ms interval)
-    if (now - previousWifiLedMillis >= 500)
-    {
-      previousWifiLedMillis = now;
-      wifiLedState = !wifiLedState;
-      digitalWrite(WIFI_LED, wifiLedState ? LOW : HIGH);
-    }
-  }
-  else if (WiFi.status() == WL_CONNECTED)
-  {
-    // Pulse blink when WiFi connected (150ms ON every 3000ms)
-    unsigned long diff = now - previousWifiLedMillis;
-    if (diff >= ledInterval)
-    {
-      previousWifiLedMillis = now;
-      digitalWrite(WIFI_LED, HIGH); // ON (Active Low)
-    }
-    else if (diff >= ledPulseDuration)
-    {
-      digitalWrite(WIFI_LED, LOW); // OFF
-    }
-  }
-  else
-  {
-    // Solid ON when disconnected but have credentials
-    digitalWrite(WIFI_LED, LOW);
+  if (bluetoothMode) {
+      // Bluetooth ON
+      wifiLed.set(LedController::OFF);
+      
+      // BLE LED Logic:
+      // BLE On -> ON
+      // BLE Connected -> Blink (We don't easily know connection state from here without callback, assuming ON for now)
+      bleLed.set(LedController::ON); 
+  } else {
+      // Normal WiFi Mode
+      bleLed.set(LedController::OFF);
+      
+      if (WiFi.status() == WL_CONNECTED) {
+          // Connected -> Blink
+          if (wifiLed.getState() != LedController::BLINK_SLOW) {
+             wifiLed.set(LedController::BLINK_SLOW);
+          }
+      } else {
+          // Disconnected -> ON
+          wifiLed.set(LedController::ON);
+      }
   }
 }
 
 // ========== Sensor LED status ==========
-void handleSensorLed()
+void updateSensorLed()
 {
-  unsigned long now = millis();
+  // Pin 13 Sensor LED:
+  // Connected -> OFF
+  // Disconnected -> ON
   
-if (sensorType != "UNKNOWN")
-  {
-    // Pulse blink when sensor detected (150ms ON every 3000ms)
-    unsigned long diff = now - previousSensorLedMillis;
-    if (diff >= ledInterval)
-    {
-      previousSensorLedMillis = now;
-      digitalWrite(SENSOR_LED, HIGH); // ON (Active Low)
-    }
-    else if (diff >= ledPulseDuration)
-    {
-      digitalWrite(SENSOR_LED, LOW); // OFF
-    }
-  }
-  else
-  {
-    // Solid ON if no sensor
-    digitalWrite(SENSOR_LED, LOW);
+  if (sensorType != "UNKNOWN") {
+      sensorLed.set(LedController::OFF);
+  } else {
+      sensorLed.set(LedController::ON);
   }
 }
 
@@ -255,6 +249,12 @@ void setupRoutes()
     delay(200);
     if (!Update.hasError()) {
       Serial.println("✓ Update successful. Rebooting...");
+      
+      // Fast blink OTA LED on success/restart
+      otaLed.set(LedController::BLINK_FAST);
+      unsigned long start = millis();
+      while(millis() - start < 2000) otaLed.update(); // Block briefly to show blink
+      
       const esp_partition_t *running = esp_ota_get_running_partition();
       const esp_partition_t *next = esp_ota_get_next_update_partition(NULL);
       Serial.printf("Running partition: %s\n", running->label);
@@ -593,12 +593,16 @@ void setup()
   Serial.printf("Booting from partition: %s\n", running->label);
   Serial.println("OTA Bootloader Starting...");
 
-  pinMode(WIFI_LED, OUTPUT);
-  pinMode(SENSOR_LED, OUTPUT);
+  wifiLed.begin();
+  bleLed.begin();
+  sensorLed.begin();
+  otaLed.begin();
+  
   pinMode(EEPROM_WP_PIN, OUTPUT);
-  digitalWrite(WIFI_LED, HIGH);
-  digitalWrite(SENSOR_LED, HIGH);
   digitalWrite(EEPROM_WP_PIN, HIGH);
+  
+  // Initial state for sensor led
+  updateSensorLed();
 
   Wire.begin(18, 19); // SDA, SCL
 
@@ -682,8 +686,8 @@ void loop()
     handleUDPDiscovery();
   }
   
-  handleWifiLed();
-  handleSensorLed();
+  handleLeds();
+  updateSensorLed();
 
   if (WiFi.status() != WL_CONNECTED)
   {

@@ -18,10 +18,23 @@
 #include "../../shared/nvs_mqtt_credentials.h"
 
 // Hardware configuration
-#define STATUS_LED 13
+// Hardware configuration
+#define RESTART_TRIGGER_PIN 32
+#define BLE_LED_PIN 12 
+#define SENSOR_LED_PIN 13 
+#define WIFI_LED_PIN 14 
+#define OTA_LED_PIN 16
 #define EEPROM_SDA 18
 #define EEPROM_SCL 19
-#define RESTART_TRIGGER_PIN 32
+#define SENSOR_ACTIVE_LED_PIN 27
+
+#include "../../shared/LedController.h"
+
+LedController wifiLed(WIFI_LED_PIN, true);   // Active LOW
+LedController bleLed(BLE_LED_PIN, true);     // Active LOW
+LedController sensorLed(SENSOR_LED_PIN, true); // Active LOW
+LedController sensorActiveLed(SENSOR_ACTIVE_LED_PIN, true); // Active LOW
+LedController otaLed(OTA_LED_PIN, true);     // Active LOW
 
 // Network configuration
 char ssid[33];      // Will be loaded from NVS
@@ -48,8 +61,14 @@ void setup()
     Serial.printf("I2C Bus Initialized:\n");
     Serial.printf("  - EEPROM: SDA=%d, SCL=%d\n", EEPROM_SDA, EEPROM_SCL);
 
-    pinMode(STATUS_LED, OUTPUT);
-    digitalWrite(STATUS_LED, HIGH);
+    // Init LEDs 
+    wifiLed.begin();
+    bleLed.begin();
+    sensorLed.begin();
+    sensorActiveLed.begin();
+    otaLed.begin();
+    
+    wifiLed.set(LedController::ON); // ON = Disconnected
     
     // Configure restart trigger pin with internal pull-up resistor
     pinMode(RESTART_TRIGGER_PIN, INPUT_PULLUP);
@@ -108,6 +127,7 @@ void setup()
     
     if (wifiConnected) {
         Serial.printf("\n✅ WiFi connected successfully. IP: %s\n", WiFi.localIP().toString().c_str());
+        wifiLed.set(LedController::BLINK_SLOW); // Connected
         
         // Detect sensor from EEPROM with failsafe mechanism
         bool sensorDetected = detectSensorFromEEPROM();
@@ -203,11 +223,36 @@ void setup()
 
     server.begin();
     Serial.println("HTTP server started");
-    digitalWrite(STATUS_LED, LOW);
+    server.begin();
+    Serial.println("HTTP server started");
+    
+    // Initial sensor LED state
+    if (sensorID != "UNKNOWN") {
+       sensorLed.set(LedController::OFF); // Connected
+    } else {
+       sensorLed.set(LedController::ON); // Disconnected
+    }
 }
 
 void loop()
 {
+    // Update LEDs
+    wifiLed.update();
+    bleLed.update();
+    sensorLed.update();
+    sensorActiveLed.update();
+    otaLed.update();
+    
+    // Sensor Active Logic:
+    // If experiment running -> Blink Pin 27
+    // Else -> OFF
+    if (experimentRunning) {
+        if (sensorActiveLed.getState() != LedController::BLINK_FAST) {
+             sensorActiveLed.set(LedController::BLINK_FAST);
+        }
+    } else {
+        sensorActiveLed.set(LedController::OFF);
+    }
     // Check sensor status periodically
     checkSensorStatus();
 
