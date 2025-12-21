@@ -17,6 +17,7 @@ struct ExperimentConfig {
     int averagingSamples = 1;
     String pairedUserID = "";     // User ID this sensor is paired with
     bool userPaired = false;      // Whether sensor is currently paired with a user
+    float motorAngle = 0;         // Motor Target Angle
 };
 
 // HTTP request handlers

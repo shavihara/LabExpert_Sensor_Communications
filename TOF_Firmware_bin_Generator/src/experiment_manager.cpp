@@ -1,4 +1,5 @@
 #include "experiment_manager.h"
+#include "motor_controller.h"
 #include "sensor_communication.h"
 #include "mqtt_handler.h"
 #include "config_handler.h"
@@ -249,6 +250,12 @@ void manageExperimentLoop()
             experimentRunning = false;
             dataReady = true;
             lastExperimentEnd = millis();
+            
+            // --- Motor Return ---
+            motor.returnHome();
+            // --------------------
+
+            // Final flush to ensure all data is sent
 
             // Final flush to ensure all data is sent
             flushSampleBuffer();

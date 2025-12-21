@@ -14,6 +14,7 @@
 #include "../include/config_handler.h"
 #include "../include/experiment_manager.h"
 #include "../include/mqtt_handler.h"
+#include "../include/motor_controller.h"
 
 // Include NVS WiFi credentials reader
 #include "nvs_wifi_credentials.h"
@@ -94,6 +95,9 @@ void setup()
     {
         Serial.println("WARNING: TOF Sensor init issues - check wiring");
     }
+
+    // Initialize Motor Controller
+    motor.begin();
 
     // Initialize hardware timer for interrupt-driven sampling
     if (initHardwareTimer())
@@ -225,6 +229,9 @@ void loop()
 
     // Manage experiment execution
     manageExperimentLoop();
+    
+    // Motor State Machine
+    motor.update();
     
     // Check restart trigger pin
     if (digitalRead(RESTART_TRIGGER_PIN) == LOW) {
