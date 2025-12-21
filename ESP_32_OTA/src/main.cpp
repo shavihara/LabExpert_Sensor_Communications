@@ -79,15 +79,23 @@ void eraseInactivePartition()
   if (inactive)
   {
     Serial.printf("Erasing inactive partition: %s\n", inactive->label);
-    esp_err_t err = esp_partition_erase_range(inactive, 0, inactive->size);
-    if (err == ESP_OK)
+    size_t offset = 0;
+    const size_t chunkSize = 4096 * 8;
+    while (offset < inactive->size)
     {
-      Serial.println("✓ Inactive partition erased successfully.");
+      size_t eraseSize = (inactive->size - offset) < chunkSize ? (inactive->size - offset) : chunkSize;
+      esp_err_t err = esp_partition_erase_range(inactive, offset, eraseSize);
+      if (err != ESP_OK)
+      {
+        Serial.printf("✘ Failed to erase offset 0x%x. Error: %d\n", (unsigned)offset, err);
+        break;
+      }
+      offset += eraseSize;
+      Serial.print(".");
+      yield();
     }
-    else
-    {
-      Serial.printf("✘ Failed to erase inactive partition. Error: %d\n", err);
-    }
+    Serial.println();
+    Serial.println("✓ Inactive partition erase done.");
   }
   else
   {
@@ -581,23 +589,6 @@ void setup()
 {
   Serial.begin(115200);
   delay(1000); // Wait for serial to stabilize
-  
-  wifiMgr.begin();
-  
-  // Check if we have stored WiFi credentials
-  if (wifiMgr.checkSavedCredentials()) {
-    Serial.println("✓ Found stored WiFi credentials - attempting to connect...");
-    if (wifiMgr.connectWiFi()) {
-      Serial.print("✓ Connected to WiFi, IP: ");
-      Serial.println(WiFi.localIP());
-    } else {
-      Serial.println("✘ Failed to connect with stored credentials");
-      // Bluetooth provisioning is already started by wifiMgr.begin() when no credentials exist
-    }
-  } else {
-    Serial.println("✗ No stored WiFi credentials found");
-    // Bluetooth provisioning is already started by wifiMgr.begin() when no credentials exist
-  }
   const esp_partition_t *running = esp_ota_get_running_partition();
   Serial.printf("Booting from partition: %s\n", running->label);
   Serial.println("OTA Bootloader Starting...");
@@ -642,8 +633,6 @@ void setup()
   // Erase inactive partition to allow clean OTA
   eraseInactivePartition();
 
-  WiFi.mode(WIFI_STA);
-  
   // Check if already connected via wifiMgr
   bool wifiConnected = (WiFi.status() == WL_CONNECTED);
   
@@ -680,6 +669,7 @@ void setup()
     Serial.printf("DeviceID: %s\n", deviceID.c_str());
     
     Serial.println("✓ Bluetooth provisioning mode active.");
+    wifiMgr.begin();
   }
 }
 
