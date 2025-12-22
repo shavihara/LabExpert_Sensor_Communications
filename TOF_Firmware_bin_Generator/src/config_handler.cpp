@@ -1,6 +1,7 @@
 #include "config_handler.h"
 #include "sensor_communication.h"
 #include "experiment_manager.h"
+#include "motor_controller.h"
 #include <ArduinoJson.h>
 #include <Update.h>
 
@@ -57,7 +58,9 @@ void handleConfigure(AsyncWebServerRequest *request) {
         if (doc.containsKey("frequency")) Serial.printf("frequency: %d\n", doc["frequency"].as<int>());
         if (doc.containsKey("duration")) Serial.printf("duration: %d\n", doc["duration"].as<int>());
         if (doc.containsKey("mode")) Serial.printf("mode: %s\n", doc["mode"].as<const char*>());
+        if (doc.containsKey("mode")) Serial.printf("mode: %s\n", doc["mode"].as<const char*>());
         if (doc.containsKey("averagingSamples")) Serial.printf("averagingSamples: %d\n", doc["averagingSamples"].as<int>());
+        if (doc.containsKey("angle")) Serial.printf("angle: %.2f\n", doc["angle"].as<float>());
         
         // Process configuration with validation
         int requestedFreq = doc["frequency"] | 30;  // Default 30Hz
@@ -81,6 +84,7 @@ void handleConfigure(AsyncWebServerRequest *request) {
         config.duration = requestedDuration;
         config.mode = doc["mode"] | "medium";  // Default medium for 30Hz
         config.averagingSamples = doc["averagingSamples"] | 1;
+        config.motorAngle = doc["angle"] | 0.0; // Default 0 (no movement)
         
         if (doc.containsKey("calibration")) {
             calibration.offsetMM = doc["calibration"]["offset"] | 0.0;
@@ -102,12 +106,20 @@ void handleConfigure(AsyncWebServerRequest *request) {
         // Update hardware timer with new frequency
         updateTimerFrequency(config.frequency);
         
+        // --- Motor Integration ---
+        if (config.motorAngle >= 15.0) {
+           motor.setConfiguration(config.motorAngle, config.duration * 1000);
+           motor.startSequence(); // Move OUT immediately upon config
+        }
+        // -------------------------
+        
         // Send proper JSON response
         String response;
         DynamicJsonDocument respDoc(200);
         respDoc["success"] = true;
         respDoc["frequency"] = config.frequency;
         respDoc["duration"] = config.duration;
+        respDoc["angle"] = config.motorAngle;
         respDoc["interval"] = sampleInterval;
         serializeJson(respDoc, response);
         
