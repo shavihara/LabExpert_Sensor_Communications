@@ -152,10 +152,24 @@ static void buttonTaskThunk(void* arg) {
   const TickType_t sample = pdMS_TO_TICKS(10);
   uint32_t pressedMs = 0;
   bool last = digitalRead(WCM_BUTTON_PIN) == LOW;
+
+  // Debug: print initial state
+  Serial.printf("DEBUG: Button Task Started. Pin %d state: %s\n", WCM_BUTTON_PIN, last ? "LOW (Pressed)" : "HIGH (Released)");
+
   for (;;) {
     bool cur = digitalRead(WCM_BUTTON_PIN) == LOW;
+    
+    // Debug logic: print only on state change to avoid spam
+    if (cur != last) {
+       Serial.printf("DEBUG: Button state changed to %s\n", cur ? "LOW (Pressed)" : "HIGH (Released)");
+    }
+
     if (cur) {
       pressedMs += 10;
+      if (pressedMs % 1000 == 0 && pressedMs > 0) {
+          Serial.printf("DEBUG: Button held for %lu ms\n", (unsigned long)pressedMs);
+      }
+
       if (pressedMs >= 3000) {
         Serial.println("🔘 Button held for 3s - Erasing credentials and restarting...");
         
@@ -176,6 +190,14 @@ static void buttonTaskThunk(void* arg) {
     } else {
       pressedMs = 0;
     }
+    
+    // Heartbeat debug every 1s
+    static unsigned long lastLog = 0;
+    if (millis() - lastLog > 1000) {
+        lastLog = millis();
+        Serial.printf("DEBUG: Button Task Heartbeat. Pin %d reads: %s\n", WCM_BUTTON_PIN, cur ? "LOW (Pressed)" : "HIGH (Released)");
+    }
+
     last = cur;
     vTaskDelay(sample);
   }

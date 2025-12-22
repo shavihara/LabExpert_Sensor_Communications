@@ -21,7 +21,7 @@ static String getDeviceIDFromMAC();
 #define OTA_LED_PIN 16
 #define EEPROM_WP_PIN 25 
 
-#include "../../shared/LedController.h"
+#include "LedController.h"
 
 LedController wifiLed(WIFI_LED_PIN, true);   // Active LOW
 LedController bleLed(BLE_LED_PIN, true);     // Active LOW
@@ -31,7 +31,7 @@ LedController otaLed(OTA_LED_PIN, true);     // Active LOW
 // EEPROM config
 #define EEPROM_SENSOR_ADDR 0x50
 #define EEPROM_SIZE 3 // Only read 3 bytes for sensor type
-#define EEPROM_WP_PIN 23
+
 
 // Wi-Fi credentials - Managed by WiFiCredentialManager
 // const char* ssid = "LabExpert_Hotspot"; // REMOVED
@@ -601,6 +601,10 @@ void setup()
   pinMode(EEPROM_WP_PIN, OUTPUT);
   digitalWrite(EEPROM_WP_PIN, HIGH);
   
+  // Initialize WiFi Manager (loads credentials, starts button task)
+  wifiMgr.begin();
+
+  
   // Initial state for sensor led
   updateSensorLed();
 
@@ -673,7 +677,7 @@ void setup()
     Serial.printf("DeviceID: %s\n", deviceID.c_str());
     
     Serial.println("✓ Bluetooth provisioning mode active.");
-    wifiMgr.begin();
+    // wifiMgr.begin(); // Already initialized at top of setup
   }
 }
 

@@ -25,7 +25,7 @@
 #define ONE_WIRE_BUS 23
 #define SENSOR_ACTIVE_LED_PIN 27
 
-#include "../../shared/LedController.h"
+#include "LedController.h"
 
 LedController wifiLed(WIFI_LED_PIN, true);   // Active LOW
 LedController bleLed(BLE_LED_PIN, true);     // Active LOW
