@@ -9,6 +9,7 @@
     <img src="https://img.shields.io/badge/Build-PlatformIO-FF7F00?logo=platformio&logoColor=white" alt="PlatformIO">
     <img src="https://img.shields.io/badge/Protocol-MQTT-660066?logo=mqtt&logoColor=white" alt="MQTT">
     <img src="https://img.shields.io/badge/Wireless-BLE%20%7C%20WiFi-0082FC?logo=bluetooth&logoColor=white" alt="BLE | WiFi">
+    <img src="https://img.shields.io/badge/License-MIT-yellow?logo=opensourceinitiative&logoColor=white" alt="MIT License">
   </p>
 </p>
 
@@ -535,7 +536,31 @@ spiffs,    data,  spiffs,  0x310000,  0x0F0000 (960 KB)
 
 ## 📄 License
 
-This project is part of the **LabExpert** platform. See the root repository for license details.
+This project is licensed under the **MIT License**.
+
+```
+MIT License
+
+Copyright (c) 2025 LabExpert
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ---
 
